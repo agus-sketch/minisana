@@ -50,13 +50,6 @@ async function logRecommendation() {
   if (!have) console.log(`   ↳ pull it with:  ollama pull ${rec.recommended}`);
 }
 
-if (USE_OLLAMA) {
-  await ensureOllama();
-  await logRecommendation();
-} else {
-  console.log("ℹ Ollama disabled in setup — using cloud providers (Groq / OpenAI / Anthropic)");
-}
-
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -304,8 +297,20 @@ async function warmOllama() {
   } catch {}
 }
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`\n✅ Minisana running at http://localhost:${PORT}\n`);
-  if (USE_OLLAMA) warmOllama();
-});
+const PORT = process.env.PORT || 3000;
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  if (USE_OLLAMA) {
+    await ensureOllama();
+    await logRecommendation();
+  } else {
+    console.log("ℹ Ollama disabled in setup — using cloud providers (Groq / OpenAI / Anthropic)");
+  }
+  app.listen(PORT, () => {
+    console.log(`\n✅ Minisana running at http://localhost:${PORT}\n`);
+    if (USE_OLLAMA) warmOllama();
+  });
+}
+
+export default app;
