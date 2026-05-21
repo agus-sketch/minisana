@@ -1,0 +1,20 @@
+{
+  "name": "minisana-agent",
+  "version": "1.0.0",
+  "description": "AI-powered Asana task agent",
+  "type": "module",
+  "bin": {
+    "minisana": "./cli.js"
+  },
+  "scripts": {
+    "start": "node minisana-agent.js",
+    "dev": "node --watch minisana-agent.js",
+    "setup": "node setup.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^3.3.2"
+  }
+}

@@ -1,0 +1,1484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minisana</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23f06a6a'/><path d='M9 16.5 l5 5 l9-11' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red: #f06a6a; --red-hover: #e05555; --red-glow: rgba(240,106,106,0.15);
+      --bg: #f0efe9; --surface: #ffffff; --surface-2: #f8f7f3; --surface-3: #f2f1ec;
+      --border: #e3e1d9; --border-light: #eceae3;
+      --text: #1a1a1a; --text-2: #555450; --text-3: #9e9b94;
+      --green: #2d6e20; --green-bg: #e6f2dc; --green-border: #b2d98a;
+      --err-bg: #fbeaea; --err-border: #f3b8b8; --err-text: #992222;
+      --radius-s: 8px; --radius-m: 12px; --radius-l: 16px; --radius-xl: 20px;
+    }
+    body.dark {
+      --bg: #111010; --surface: #1a1918; --surface-2: #222120; --surface-3: #2c2a28;
+      --border: #333130; --border-light: #2b2928;
+      --text: #e8e5de; --text-2: #a09d97; --text-3: #6a6762;
+      --green: #5ea84d; --green-bg: #162010; --green-border: #2a401f;
+      --err-bg: #201212; --err-border: #3d1f1f; --err-text: #e87878;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px; -webkit-font-smoothing: antialiased; transition: background 0.2s;
+    }
+    #app {
+      width: 100%; max-width: 720px; background: var(--surface);
+      border-radius: var(--radius-xl); border: 1px solid var(--border);
+      display: flex; flex-direction: column; height: 93vh; max-height: 840px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05), 0 6px 24px rgba(0,0,0,0.08), 0 20px 60px rgba(0,0,0,0.06);
+      overflow: hidden; transition: max-width 0.32s cubic-bezier(0.4,0,0.2,1), background 0.2s, border-color 0.2s;
+    }
+    #app.panel-open { max-width: 1060px; }
+
+    /* Header */
+    #header { padding: 14px 18px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
+    .logo { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(145deg,#f47a7a,#d94f4f); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 2px 8px rgba(220,80,80,.3); }
+    .logo svg { width: 17px; height: 17px; fill: #fff; }
+    .header-info { display: flex; flex-direction: column; gap: 1px; }
+    #header-title { font-size: 14px; font-weight: 650; color: var(--text); letter-spacing: -.01em; }
+    #header-sub { font-size: 11px; color: var(--text-3); }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .project-switcher { position: relative; display: flex; align-items: center; gap: 2px; }
+    #status-pill { font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 20px; background: var(--surface-3); color: var(--text-3); border: 1px solid var(--border); white-space: nowrap; transition: background .2s, color .2s, border-color .2s; }
+    #status-pill.connected { background: var(--green-bg); color: var(--green); border-color: var(--green-border); }
+    #status-pill.error { background: var(--err-bg); color: var(--err-text); border-color: var(--err-border); }
+    #projectPickerBtn { width: 22px; height: 22px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background .12s, color .12s; }
+    #projectPickerBtn:hover { background: var(--surface-2); color: var(--text-2); }
+    #projectPickerBtn:disabled { opacity: .3; cursor: default; }
+    #projectPickerBtn svg { width: 12px; height: 12px; transition: transform .2s; }
+    #projectPickerBtn.open svg { transform: rotate(180deg); }
+    #project-dropdown { display: none; position: absolute; top: calc(100% + 7px); right: 0; min-width: 210px; max-height: 280px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-m); box-shadow: 0 4px 6px rgba(0,0,0,.06),0 10px 28px rgba(0,0,0,.12); z-index: 200; padding: 4px; }
+    #project-dropdown.open { display: block; animation: dropIn .15s ease both; }
+    @keyframes dropIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+    #project-dropdown::-webkit-scrollbar { width: 3px; }
+    #project-dropdown::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .proj-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--radius-s); font-size: 12.5px; color: var(--text); cursor: pointer; transition: background .1s; }
+    .proj-item:hover { background: var(--surface-2); }
+    .proj-item.active { color: var(--red); font-weight: 600; }
+    .proj-check { width: 14px; flex-shrink: 0; font-size: 11px; color: var(--red); }
+    .hdr-btn { width: 30px; height: 30px; border-radius: var(--radius-s); border: 1px solid var(--border); background: var(--surface); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background .15s, color .15s; }
+    .hdr-btn:hover { background: var(--surface-2); color: var(--text-2); }
+    .hdr-btn.open { background: var(--surface-3); color: var(--text); }
+    .hdr-btn svg { width: 15px; height: 15px; }
+    .hdr-btn:disabled { opacity: .35; cursor: default; }
+
+    /* Config */
+    #config { overflow: hidden; max-height: 200px; opacity: 1; transition: max-height .3s cubic-bezier(.4,0,.2,1), opacity .25s ease, border-bottom-width .3s; border-bottom: 1px solid var(--border-light); background: var(--surface-2); }
+    #config.collapsed { max-height: 0; opacity: 0; border-bottom-width: 0; }
+    .config-inner { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .config-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+    .field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 120px; }
+    .field label { font-size: 10.5px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
+    .field input { padding: 7px 11px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+    .field input:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+    .field input::placeholder { color: var(--text-3); }
+    .field select { padding: 7px 11px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; font-family: inherit; transition: border-color .15s; cursor: pointer; }
+    .field select:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+    .provider-wrap { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+    .provider-wrap label { font-size: 10.5px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
+    .provider-tabs { display: flex; background: var(--surface-3); border-radius: var(--radius-s); padding: 2px; border: 1px solid var(--border); }
+    .pvtab { padding: 5px 12px; font-size: 12px; font-weight: 600; border: none; background: transparent; cursor: pointer; border-radius: 6px; color: var(--text-3); font-family: inherit; transition: background .15s, color .15s; }
+    .pvtab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    #connectBtn { padding: 0 18px; height: 34px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-s); background: var(--red); color: #fff; cursor: pointer; white-space: nowrap; font-family: inherit; flex-shrink: 0; transition: background .15s, transform .1s, box-shadow .15s; box-shadow: 0 1px 4px rgba(220,80,80,.25); }
+    #connectBtn:hover { background: var(--red-hover); }
+    #connectBtn:active { transform: scale(.97); }
+    #connectBtn:disabled { background: #d8d6d0; color: #a8a6a0; cursor: default; transform: none; box-shadow: none; }
+
+    /* Body */
+    #body { flex: 1; display: flex; overflow: hidden; }
+    #chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    #messages { flex: 1; overflow-y: auto; padding: 22px 20px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
+    #messages::-webkit-scrollbar { width: 3px; }
+    #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .msg { display: flex; flex-direction: column; max-width: 86%; gap: 4px; animation: msgIn .2s ease both; }
+    @keyframes msgIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.agent { align-self: flex-start; align-items: flex-start; }
+    .msg-time { font-size: 10px; color: var(--text-3); padding: 0 4px; }
+    .bubble { padding: 11px 15px; border-radius: var(--radius-l); font-size: 14px; line-height: 1.65; color: var(--text); }
+    .user .bubble { background: var(--red); color: #fff; border-bottom-right-radius: 4px; }
+    .agent .bubble { background: var(--surface-2); border: 1px solid var(--border-light); border-bottom-left-radius: 4px; }
+    .bubble.success { background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green); }
+    .bubble.error { background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err-text); }
+    .action-log { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+    .action-item { font-size: 13px; padding: 7px 11px; border-radius: var(--radius-s); background: rgba(255,255,255,.55); border: 1px solid rgba(0,0,0,.055); color: inherit; line-height: 1.5; }
+    body.dark .action-item { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.06); }
+    .typing-wrap { padding: 3px 0; }
+    .typing { display: flex; gap: 5px; align-items: center; height: 20px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: bop 1.2s infinite; }
+    .dot:nth-child(2){animation-delay:.18s} .dot:nth-child(3){animation-delay:.36s}
+    @keyframes bop { 0%,60%,100%{transform:translateY(0);opacity:.5} 30%{transform:translateY(-5px);opacity:1} }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .chip { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; transition: background .12s, border-color .12s, color .12s, transform .1s; line-height: 1.4; }
+    .chip:hover { background: #fff0f0; border-color: var(--red); color: var(--red); transform: translateY(-1px); }
+    body.dark .chip:hover { background: rgba(240,106,106,.1); }
+    .chip:disabled { opacity: .45; cursor: default; transform: none; }
+    #inputbar { padding: 13px 18px; border-top: 1px solid var(--border-light); display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+    #userInput { flex: 1; resize: none; font-size: 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-m); font-family: inherit; line-height: 1.5; color: var(--text); outline: none; max-height: 120px; background: var(--surface-2); transition: border-color .15s, box-shadow .15s, background .15s; }
+    #userInput:focus { border-color: var(--red); background: var(--surface); box-shadow: 0 0 0 3px var(--red-glow); }
+    #userInput::placeholder { color: var(--text-3); }
+    #sendBtn { width: 40px; height: 40px; border-radius: var(--radius-m); border: none; background: var(--red); color: #fff; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: background .15s, transform .1s, box-shadow .15s; box-shadow: 0 1px 4px rgba(220,80,80,.25); }
+    #sendBtn:hover { background: var(--red-hover); }
+    #sendBtn:active { transform: scale(.91); }
+    #sendBtn:disabled { background: #d8d6d0; cursor: default; transform: none; box-shadow: none; }
+    #sendBtn svg { width: 16px; height: 16px; fill: #fff; }
+    #chatAttachBtn { width: 40px; height: 40px; border-radius: var(--radius-m); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-3); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+    #chatAttachBtn:hover { background: var(--surface-3); color: var(--text); }
+    #chatAttachBtn svg { width: 16px; height: 16px; }
+
+    /* Panel */
+    #task-panel { width: 0; flex-shrink: 0; overflow: hidden; border-left: 0 solid var(--border-light); background: var(--surface-2); display: flex; flex-direction: column; position: relative; transition: width .32s cubic-bezier(.4,0,.2,1), border-left-width .32s; }
+    #task-panel.open { width: 310px; border-left-width: 1px; }
+    #panel-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
+    .panel-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .panel-title { font-size: 12px; font-weight: 650; color: var(--text); }
+    .panel-head-actions { display: flex; gap: 4px; }
+    .panel-icon-btn { width: 24px; height: 24px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background .12s, color .12s; }
+    .panel-icon-btn:hover { background: var(--surface-3); color: var(--text-2); }
+    .panel-icon-btn.active { background: var(--red); color: #fff; }
+    .panel-icon-btn svg { width: 13px; height: 13px; }
+    .panel-icon-btn.spinning svg { animation: spin .7s linear infinite; }
+    @keyframes spin { to{transform:rotate(360deg)} }
+    .panel-tabs { display: flex; gap: 2px; background: var(--surface-3); border-radius: 8px; padding: 2px; margin-bottom: 8px; }
+    .ptab { flex: 1; padding: 4px 0; font-size: 11px; font-weight: 600; text-align: center; border: none; background: transparent; cursor: pointer; border-radius: 6px; color: var(--text-3); font-family: inherit; transition: background .15s, color .15s; }
+    .ptab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .panel-search-wrap { position: relative; margin-bottom: 8px; }
+    #panelSearch { width: 100%; padding: 6px 28px 6px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+    #panelSearch:focus { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-glow); }
+    #panelSearch::placeholder { color: var(--text-3); }
+    #searchClear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; border: none; background: transparent; cursor: pointer; color: var(--text-3); display: none; align-items: center; justify-content: center; border-radius: 4px; font-size: 14px; padding: 0; }
+    #searchClear.visible { display: flex; }
+    #searchClear:hover { color: var(--text); }
+    /* Assignee chips */
+    .assignee-chips { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; -ms-overflow-style: none; scrollbar-width: none; }
+    .assignee-chips::-webkit-scrollbar { display: none; }
+    .a-chip { flex-shrink: 0; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 500; border: 1px solid var(--border); background: var(--surface); color: var(--text-3); cursor: pointer; white-space: nowrap; transition: all .12s; }
+    .a-chip:hover { border-color: var(--text-3); color: var(--text-2); }
+    .a-chip.active { background: var(--text); color: var(--surface); border-color: var(--text); }
+    body.dark .a-chip.active { background: var(--text); color: var(--bg); }
+
+    #panel-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+    #panel-body::-webkit-scrollbar { width: 3px; }
+    #panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .panel-empty { padding: 32px 16px; text-align: center; color: var(--text-3); font-size: 12px; line-height: 1.6; }
+    .section-group { margin-bottom: 4px; }
+    .section-label { font-size: 10px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; padding: 6px 14px 3px; display: block; }
+    .task-item { display: flex; align-items: flex-start; gap: 9px; padding: 7px 14px; cursor: pointer; transition: background .1s; }
+    .task-item:hover { background: var(--surface-3); }
+    .task-item.selected { background: rgba(240,106,106,.08); }
+    .task-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; border: 1.5px solid var(--text-3); display: flex; align-items: center; justify-content: center; }
+    .task-dot.done { background: var(--green); border-color: var(--green); }
+    .task-dot.done::after { content:''; width:5px; height:3px; border-left:1.5px solid #fff; border-bottom:1.5px solid #fff; transform:rotate(-45deg) translate(1px,-1px); display:block; }
+    .task-checkbox { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; margin-top: 2px; border: 1.5px solid var(--text-3); display: flex; align-items: center; justify-content: center; transition: background .12s, border-color .12s; }
+    .task-checkbox.checked { background: var(--red); border-color: var(--red); }
+    .task-checkbox.checked::after { content:''; width:5px; height:3px; border-left:1.5px solid #fff; border-bottom:1.5px solid #fff; transform:rotate(-45deg) translate(1px,-1px); display:block; }
+    .task-info { flex: 1; min-width: 0; }
+    .task-name { font-size: 12.5px; line-height: 1.45; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+    .task-name.done { color: var(--text-3); text-decoration: line-through; }
+    .task-meta { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+    .avatar { width: 16px; height: 16px; border-radius: 50%; font-size: 8px; font-weight: 700; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .due-tag { font-size: 10.5px; color: var(--text-3); }
+    .due-tag.overdue { color: var(--red); font-weight: 600; }
+    .task-expand { margin-left: auto; width: 18px; height: 18px; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); border-radius: 4px; flex-shrink: 0; padding: 0; transition: color .12s, background .12s; }
+    .task-expand:hover { color: var(--text-2); background: var(--surface-3); }
+    .task-expand svg { width: 10px; height: 10px; transition: transform .18s ease; }
+    .task-expand.open svg { transform: rotate(90deg); }
+    .subtasks-wrap { border-left: 1.5px solid var(--border-light); margin-left: 21px; }
+    .subtask-row { display: flex; align-items: flex-start; gap: 9px; padding: 5px 14px; cursor: pointer; transition: background .1s; }
+    .subtask-row:hover { background: var(--surface-3); }
+    .subtask-row .task-dot { width: 12px; height: 12px; margin-top: 2px; }
+    .subtask-row .task-name { font-size: 12px; }
+
+    /* Bulk toolbar */
+    #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 14px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    #bulk-toolbar.visible { max-height: 52px; padding: 10px 14px; border-top-width: 1px; }
+    #bulk-count { font-size: 12px; font-weight: 600; color: var(--text-2); flex: 1; }
+    .bulk-btn { padding: 5px 10px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: inherit; white-space: nowrap; transition: background .12s, color .12s; }
+    .bulk-btn:hover { background: var(--surface-3); }
+    .bulk-btn.primary { background: var(--green-bg); border-color: var(--green-border); color: var(--green); }
+    .bulk-btn.primary:hover { background: var(--green-border); }
+    #bulk-section { font-size: 11.5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); font-family: inherit; outline: none; cursor: pointer; max-width: 110px; }
+
+    /* Panel overlays (detail + quick-add) */
+    .side-overlay { position: absolute; inset: 0; background: var(--surface-2); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .25s cubic-bezier(.4,0,.2,1); z-index: 10; }
+    .side-overlay.open { transform: translateX(0); }
+    .overlay-head { padding: 12px 14px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .overlay-head-title { font-size: 12.5px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overlay-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+    .overlay-body::-webkit-scrollbar { width: 3px; }
+    .overlay-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Task detail */
+    .detail-meta { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border-light); border-radius: var(--radius-m); padding: 11px 13px; }
+    .detail-meta-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+    .detail-meta-row svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--text-3); }
+    .detail-meta-label { color: var(--text-3); min-width: 52px; }
+    .detail-section-title { font-size: 11px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
+    .detail-notes { font-size: 13px; line-height: 1.65; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
+    .detail-notes.empty { color: var(--text-3); font-style: italic; }
+    .detail-subtask-item { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border-light); font-size: 12.5px; color: var(--text); cursor: pointer; border-radius: 6px; transition: background .1s; }
+    .detail-subtask-item:last-child { border-bottom: none; }
+    .detail-subtask-item:hover { background: var(--surface-3); }
+    .detail-subtask-item.done span { color: var(--text-3); text-decoration: line-through; }
+    .story-item { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--border-light); }
+    .story-item:last-child { border-bottom: none; }
+    .story-meta { display: flex; align-items: center; gap: 6px; }
+    .story-author { font-size: 11.5px; font-weight: 600; color: var(--text); }
+    .story-time { font-size: 10.5px; color: var(--text-3); }
+    .story-text { font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
+    .detail-loading { padding: 32px; text-align: center; color: var(--text-3); font-size: 12px; }
+
+    /* Quick-add form */
+    .qa-form { display: flex; flex-direction: column; gap: 10px; }
+    .qa-field { display: flex; flex-direction: column; gap: 4px; }
+    .qa-field label { font-size: 10.5px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
+    .qa-field input, .qa-field select { padding: 8px 11px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+    .qa-field input:focus, .qa-field select:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+    .qa-field input::placeholder { color: var(--text-3); }
+    #qa-submit { padding: 10px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-s); background: var(--red); color: #fff; cursor: pointer; font-family: inherit; margin-top: 4px; transition: background .15s, opacity .15s; box-shadow: 0 1px 4px rgba(220,80,80,.25); }
+    #qa-submit:hover { background: var(--red-hover); }
+    #qa-submit:disabled { opacity: .5; cursor: default; }
+
+    /* image chips & previews */
+    .img-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 8px 5px 5px; margin-top: 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); font-size: 12px; color: var(--text-2); max-width: 100%; }
+    .img-chip img { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+    .img-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .img-chip-x { width: 18px; height: 18px; border-radius: 50%; border: none; background: transparent; color: var(--text-3); cursor: pointer; font-size: 16px; line-height: 1; padding: 0; flex-shrink: 0; }
+    .img-chip-x:hover { background: var(--surface-3); color: var(--text); }
+    .attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; margin-top: 6px; }
+    .att-thumb { position: relative; aspect-ratio: 1; border-radius: var(--radius-s); overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); cursor: pointer; }
+    .att-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .att-thumb .att-file { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 10px; color: var(--text-3); padding: 4px; text-align: center; word-break: break-word; }
+    .composer { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s); }
+    .composer textarea { resize: none; font-family: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; min-height: 56px; }
+    .composer textarea:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+    .composer-actions { display: flex; align-items: center; gap: 6px; }
+    .composer-actions .icon-btn { width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-s); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-3); transition: background .15s, color .15s; }
+    .composer-actions .icon-btn:hover { background: var(--surface-3); color: var(--text); }
+    .composer-actions .icon-btn svg { width: 14px; height: 14px; }
+    .composer-actions .send-btn { margin-left: auto; padding: 6px 12px; font-size: 12px; font-weight: 600; border: none; border-radius: var(--radius-s); background: var(--red); color: #fff; cursor: pointer; font-family: inherit; }
+    .composer-actions .send-btn:hover { background: var(--red-hover); }
+    .composer-actions .send-btn:disabled { opacity: .5; cursor: default; }
+    #chat-image-bar { padding: 0 18px 4px; }
+    .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 9999; display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+    .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="17" r="3"/><circle cx="19" cy="17" r="3"/></svg></div>
+    <div class="header-info">
+      <span id="header-title">Minisana</span>
+      <span id="header-sub">AI-powered task assistant</span>
+    </div>
+    <div class="header-right">
+      <div class="project-switcher">
+        <div id="status-pill">Not connected</div>
+        <button id="projectPickerBtn" onclick="toggleProjectPicker()" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div id="project-dropdown"></div>
+      </div>
+      <button id="darkBtn" class="hdr-btn" onclick="toggleDark()" title="Dark mode">
+        <svg id="dark-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <button id="panelBtn" class="hdr-btn" onclick="togglePanel()" title="Task panel" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+      </button>
+      <button id="settingsBtn" class="hdr-btn" onclick="toggleConfig()" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="config">
+    <div class="config-inner">
+      <div class="config-row">
+        <div class="field"><label>Asana Token</label><input type="password" id="asanaToken" placeholder="Personal access token" /></div>
+        <div class="field" id="llm-key-field"><label id="llm-key-label">Groq API Key</label><input type="password" id="llmKey" placeholder="Groq API key" /></div>
+        <div class="field" id="ollama-model-field" style="display:none"><label>Ollama Model</label><select id="ollamaModelSelect" onchange="ollamaModel=this.value; warmCurrentModel();"></select></div>
+        <div class="provider-wrap">
+          <label>Provider</label>
+          <div class="provider-tabs">
+            <button class="pvtab active" onclick="setProvider('groq')">Groq</button>
+            <button class="pvtab" onclick="setProvider('openai')">OpenAI</button>
+            <button class="pvtab" id="provider-tab-ollama" onclick="setProvider('ollama')">Ollama</button>
+            <button class="pvtab" onclick="setProvider('anthropic')">Claude</button>
+          </div>
+        </div>
+        <button id="connectBtn" onclick="connect()">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="body">
+    <div id="chat">
+      <div id="messages">
+        <div class="msg agent">
+          <div class="bubble" id="welcome-bubble">Hi, I'm Minisana! Enter your Asana token and API key above to get started.</div>
+          <div class="chips"><span class="chip" onclick="askCapabilities(this)">What can I ask you?</span></div>
+        </div>
+      </div>
+      <div id="chat-image-bar" style="display:none"></div>
+      <div id="inputbar">
+        <button id="chatAttachBtn" type="button" onclick="$('chatImageInput').click()" title="Attach image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <input type="file" id="chatImageInput" accept="image/*" style="display:none" onchange="onChatImageChange(this)" />
+        <textarea id="userInput" rows="1" placeholder="Tell me what to do… (paste an image to attach)" onpaste="onChatInputPaste(event)"></textarea>
+        <button id="sendBtn" onclick="send()"><svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg></button>
+      </div>
+    </div>
+
+    <div id="task-panel">
+      <div id="panel-head">
+        <div class="panel-title-row">
+          <span class="panel-title">Project Tasks</span>
+          <div class="panel-head-actions">
+            <button class="panel-icon-btn" id="addTaskBtn" onclick="openQuickAdd()" title="Add task">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </button>
+            <button class="panel-icon-btn" id="selectBtn" onclick="toggleSelectMode()" title="Select tasks">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="4" height="4" rx="1"/><rect x="3" y="13" width="4" height="4" rx="1"/><line x1="10" y1="7" x2="21" y2="7"/><line x1="10" y1="15" x2="21" y2="15"/></svg>
+            </button>
+            <button class="panel-icon-btn" id="refreshBtn" onclick="refreshPanel()" title="Refresh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="panel-tabs">
+          <button class="ptab active" onclick="setPanelFilter('open',this)">Open</button>
+          <button class="ptab" onclick="setPanelFilter('done',this)">Done</button>
+          <button class="ptab" onclick="setPanelFilter('all',this)">All</button>
+        </div>
+        <div class="panel-search-wrap">
+          <input id="panelSearch" placeholder="Search tasks…" oninput="onPanelSearch(this.value)" />
+          <button id="searchClear" onclick="clearPanelSearch()">×</button>
+        </div>
+        <div class="assignee-chips" id="assignee-chips"></div>
+      </div>
+
+      <div id="panel-body"><div class="panel-empty">Connect to see your project tasks.</div></div>
+
+      <div id="bulk-toolbar">
+        <span id="bulk-count">0 selected</span>
+        <button class="bulk-btn primary" onclick="bulkComplete()">✓ Complete</button>
+        <select id="bulk-section" onchange="bulkMove(this.value)">
+          <option value="">Move to…</option>
+        </select>
+        <button class="bulk-btn" onclick="clearSelection()">✕ Clear</button>
+      </div>
+
+      <!-- Task detail overlay -->
+      <div id="task-detail" class="side-overlay">
+        <div class="overlay-head">
+          <button class="panel-icon-btn" onclick="closeTaskDetail()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <span class="overlay-head-title" id="detail-title">Task Detail</span>
+        </div>
+        <div class="overlay-body" id="detail-body"></div>
+      </div>
+
+      <!-- Quick-add overlay -->
+      <div id="quick-add-panel" class="side-overlay">
+        <div class="overlay-head">
+          <button class="panel-icon-btn" onclick="closeQuickAdd()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <span class="overlay-head-title">New Task</span>
+        </div>
+        <div class="overlay-body">
+          <div class="qa-form">
+            <div class="qa-field"><label>Task name *</label><input id="qa-name" placeholder="e.g. Fix login bug" oninput="$('qa-submit').disabled=!this.value.trim()" /></div>
+            <div class="qa-field"><label>Section</label><select id="qa-section"><option value="">No section</option></select></div>
+            <div class="qa-field"><label>Assignee</label><input id="qa-assignee" placeholder="Email or name (optional)" /></div>
+            <div class="qa-field"><label>Due date</label><input type="date" id="qa-due" /></div>
+            <div class="qa-field"><label>Image (optional)</label><input type="file" id="qa-image" accept="image/*" onchange="onQaImageChange(this)" /><div id="qa-image-preview" class="img-chip" style="display:none"><img id="qa-image-thumb" alt="" /><span id="qa-image-name"></span><button type="button" class="img-chip-x" onclick="clearQaImage()">×</button></div></div>
+            <button id="qa-submit" onclick="submitQuickAdd()" disabled>Create Task</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ── State ─────────────────────────────────────────────────────────────────
+let asanaToken = '', projectGid = '', projectName = '', me = null, busy = false;
+let workspaceGid = '', workspaceUsers = [];
+let panelOpen = false, panelFilter = 'open', panelSearch = '', assigneeFilter = 'all';
+let selectMode = false, selectedTasks = new Set();
+let cachedTasks = [], cachedSections = [], allProjects = [], pickerOpen = false;
+let lastFetchedAt = 0; const CACHE_TTL_MS = 30000;
+let workspaceTags = []; let undoStack = [];
+let provider = 'groq', groqKey = '', openaiKey = '', anthropicKey = '', ollamaModel = 'qwen2.5:14b', darkMode = false;
+let chatHistory = [];
+let recentContext = []; // last tasks/subtasks shown — resolves "it","that","both","those"
+let expandedTasks = new Set(), subtaskCache = {};
+let currentDetailGid = null, detailComposerImage = null, pendingChatImage = null;
+
+const STORAGE_KEY = 'minisana-creds', KEYS_KEY = 'minisana-keys';
+const THEME_KEY = 'minisana-theme', PROV_KEY = 'minisana-provider';
+
+// Stable static rules — kept byte-identical across turns so local-LLM prefix kv-cache is reused.
+// All per-turn data (user, project, today, tasks, history, recent context) goes in a separate state message.
+const RULES_BLOCK = `You are Minisana, an advanced productivity assistant integrated with Asana. Your goal: help the user manage work efficiently by prioritizing tasks, detecting risks, and suggesting actions. Be concise, structured, action-oriented — never dump raw data, analyze and summarize. Think before answering: identify intent, urgency, dependencies. Prefer actions over explanations. Never invent task data; if something's missing, ask one short clarifying question (as the "answer"). Return ONLY one valid JSON object — no markdown fences, no text outside JSON.
+
+User identity, current project, today/tomorrow, tasks, sections, projects, tags, team members, recent conversation, and recently shown items are provided in a separate STATE message below — read it for all current data; do not invent any. "I"/"me"/"my" refers to the user named in STATE.
+
+=== INTENT CLASSIFICATION (internal) ===
+Silently classify each user request into one of: summarize_project, prioritize_tasks, detect_blockers, suggest_next_steps, create_task, update_task, general_question, off_topic. Infer the most likely intent if unclear.
+
+=== SCOPE ===
+Only answer questions about Asana and the user's work (tasks, projects, deadlines, standups, prioritisation, blockers, team workload, comments, productivity within their workspace). If the user asks anything off-topic — recipes, weather, general trivia, coding help, world knowledge, personal advice unrelated to work — classify as off_topic and return {"answer": "I can only help with your Asana tasks and projects. Want me to prioritise your work, draft a standup, or create a task instead?"} (vary the phrasing slightly, keep it short, and offer one concrete Asana-related suggestion). Do NOT attempt to answer the off-topic request, even partially. Do NOT generate actions.
+
+=== TASK ANALYSIS RULES ===
+When prioritizing, rank by: (1) deadline proximity (overdue > today > this week > later), (2) blocking other work / dependencies, (3) explicit importance (tags like "urgent", "high").
+Flag blockers: overdue tasks; tasks waiting on others; tasks with no due date but stuck in a "blocked" or "review" section.
+Flag risks: one person assigned multiple urgent/high-priority items; deadlines clustered on the same day; more than 3 overdue tasks.
+
+=== EFFICIENCY ===
+- Do not analyze more than 20 tasks at once. If there are more, focus on the highest-priority subset and say "showing top N of M".
+- Summarize before reasoning over large datasets. No redundant analysis.
+
+=== ANSWER FORMAT (HTML inside "answer") ===
+For prioritize / blockers / standup / "what should I do" / project-status requests, structure the HTML as:
+<strong>🔥 Priority Tasks</strong><br>• <task name> — <one-line reason><br>...
+<strong>⚠️ Risks / Blockers</strong><br>• <issue> — <impact><br>...
+<strong>✅ Suggested Actions</strong><br>• <concrete next step><br>...
+Skip a section if there's nothing to put in it. Keep the whole answer under ~150 words unless the user explicitly asks for detail.
+For simple lookups (e.g. "what's on my plate", "what's done", confirmations) a plain HTML list is fine — don't force the 3-section structure when it'd be overkill.
+
+=== WHEN TO USE answer vs actions ===
+Use {"answer": "..."} when the user is ASKING or VIEWING — questions, listing tasks, summaries, status.
+Use {"actions": [...]} ONLY when the user wants to CHANGE something — complete, move, assign, create, comment.
+
+NEVER use actions to list or show tasks. The task data is already in STATE — just read it and answer.
+
+=== OUTPUT FORMAT ===
+• {"answer": "<HTML string>"} — reading, listing, summarising
+• {"actions": [{"action":"...","task":"...","subtask":"...","section":"...","assignee":"...","follower":"...","comment":"...","name":"...","notes":"...","due":"YYYY-MM-DD","tag":"...","project":"..."}]} — writing/changing
+
+=== AVAILABLE ACTIONS (write-only) ===
+move_to_section | assign | assign_subtask | unassign | unassign_subtask
+comment | complete | uncomplete | complete_subtask | uncomplete_subtask
+create_task | create_subtask | rename_task | rename_subtask | set_description | delete_task | delete_subtask
+set_due_date | set_due_date_subtask | remove_due_date
+add_follower | remove_follower
+add_tag | remove_tag
+switch_project | undo
+get_subtasks | get_all_subtasks | get_done_subtasks | get_task_details | explain_task
+unknown
+
+=== LANGUAGE RULES ===
+- "what do I have" / "my tasks" / "show me my tasks" / "what's on my plate" → {"answer": HTML list of incomplete tasks}
+- "what's done" / "what did I finish" → {"answer": HTML list of completed tasks}
+- "all tasks" → {"answer": HTML list of all tasks grouped by section}
+- "finish"/"done"/"check off"/"wrap up" → complete action
+- "reopen"/"undo"/"uncheck" → uncomplete action
+- "move to"/"put in"/"send to" → move_to_section action
+- "add"/"create"/"new task"/"remind me to" → create_task action
+- Match tasks by partial name or keywords ("the login thing" → "Fix login bug")
+- Resolve "that"/"it"/"this one"/"those" using conversation history
+- Multiple changes in one message → multiple actions in the array
+- Use the Today/Tomorrow values from STATE; also accept "yesterday", "next monday", "next week", "end of week", "in 3 days", weekday names — pass them as-is in "due" and the runtime will normalize.
+- "switch to <project>"/"open <project>"/"go to <project>" → switch_project action with "project"=name (match against AVAILABLE PROJECTS in STATE)
+- "tag <task> as X"/"add tag X to <task>" → add_tag, "tag"=name; "remove tag X from <task>"/"untag <task>" → remove_tag
+- "undo"/"undo that"/"revert"/"oops" → undo action (no other fields needed). Use only when the user explicitly asks to reverse the last mutation.
+- Sub-tasks are NOT included in STATE — you MUST fetch them via action, NEVER answer from memory.
+- Any question about sub-tasks → always return actions, never {"answer": "..."} saying there are none.
+- "any sub-tasks"/"show sub-tasks"/"pending sub-tasks" with no specific task → get_subtasks action for EVERY incomplete task that has num_subtasks > 0
+- get_subtasks=incomplete only, get_all_subtasks=all, get_done_subtasks=done only
+- complete_subtask/uncomplete_subtask: "task"=parent name, "subtask"=child name
+- create_task: "name"=title (never use "task" for this); "notes"=description; "section"/"assignee"/"due" optional
+- create_subtask: "task"=parent task name, "name"=sub-task title; "assignee"/"due"/"notes" optional
+- rename_task: "task"=current name, "name"=new name
+- rename_subtask: "task"=parent, "subtask"=current sub-task name, "name"=new name
+- set_description: "task"=task name, "notes"=new description text
+- delete_task: "delete"/"remove"/"get rid of" → delete_task; if task has no name use "unnamed" as "task" value
+- delete_subtask: "task"=parent, "subtask"=sub-task name
+- unassign: removes assignee from task; unassign_subtask: "task"=parent, "subtask"=name
+- remove_due_date: clears due date; set_due_date_subtask: "task"=parent, "subtask"=name, "due"=date
+- add_follower / remove_follower: use "follower" field (or "assignee") with email from TEAM MEMBERS in STATE
+- get_task_details: "show details"/"description of"/"full info" → get_task_details (raw fields dump)
+- explain_task: "explain"/"what's this task about"/"what must be done"/"what do I have to do"/"what does this task say"/"summarize this task"/"tell me about <task>"/"help me understand" → explain_task. Use this whenever the user wants to UNDERSTAND a task (not just see its fields). Notes, sub-tasks and comments are NOT in STATE — explain_task fetches them and produces a natural-language summary. Prefer explain_task over get_task_details when the user's intent is comprehension rather than inspection.
+- For "assign"/"add_follower": always use the email from TEAM MEMBERS in STATE, never a name or GID
+- For assign_subtask/complete_subtask/etc.: "task"=parent name, "subtask"=child name
+- "the undone/incomplete/pending sub-task" → set "subtask"="undone" (code resolves by completion status)
+- standup/daily summary → use the ANSWER FORMAT (🔥 Priority / ⚠️ Risks / ✅ Suggested Actions), OR if the user asks for a strict standup, use sections: <strong>✅ Done</strong> <strong>🔄 In Progress</strong> <strong>⚠️ Overdue</strong> <strong>📅 Coming up</strong> (next 7 days). Skip empty sections.
+- RECENTLY SHOWN resolution: if type="task" → use its "name" as "task" field; if type="subtask" → use its "parent" as "task" and "name" as "subtask"; "both"/"all of them"/"those" → one action per item in RECENTLY SHOWN
+- If ambiguous → {"answer": "clarifying question"}`;
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function stripHtml(h) { return h.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,400); }
+function avatarColor(n) { const p=['#f06a6a','#6a9ef0','#6af09e','#f0c36a','#c36af0','#6af0e9','#f09e6a','#9ef06a']; let h=0; for(const c of(n||'?'))h=(h*31+c.charCodeAt(0))&0xffff; return p[h%p.length]; }
+function initials(n) { if(!n)return'?'; const p=n.trim().split(/\s+/); return(p.length>=2?p[0][0]+p[1][0]:n.slice(0,2)).toUpperCase(); }
+function isOverdue(d) { return d&&new Date(d+'T00:00:00')<new Date(new Date().toDateString()); }
+function fmtDate(iso) { if(!iso)return''; const d=new Date(iso); return d.toLocaleDateString([],{month:'short',day:'numeric',year:d.getFullYear()!==new Date().getFullYear()?'numeric':undefined}); }
+function parseRelativeDate(s) {
+  if(!s||typeof s!=='string') return s;
+  const t=s.trim().toLowerCase(); if(!t) return s;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const iso=d=>d.toISOString().slice(0,10);
+  const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+  const DOW={sunday:0,sun:0,monday:1,mon:1,tuesday:2,tue:2,tues:2,wednesday:3,wed:3,thursday:4,thu:4,thurs:4,friday:5,fri:5,saturday:6,sat:6};
+  if(t==='today') return iso(today);
+  if(t==='tomorrow'||t==='tmrw'||t==='tmr') return iso(addDays(today,1));
+  if(t==='yesterday') return iso(addDays(today,-1));
+  if(t==='end of week'||t==='eow') { const off=(5-today.getDay()+7)%7||7; return iso(addDays(today,off)); }
+  if(t==='next week') return iso(addDays(today,7));
+  if(t==='next month') { const x=new Date(today); x.setMonth(x.getMonth()+1); return iso(x); }
+  const inDays=t.match(/^in\s+(\d+)\s+day(s)?$/); if(inDays) return iso(addDays(today,parseInt(inDays[1],10)));
+  const inWeeks=t.match(/^in\s+(\d+)\s+week(s)?$/); if(inWeeks) return iso(addDays(today,parseInt(inWeeks[1],10)*7));
+  const nextDow=t.match(/^next\s+(\w+)$/); if(nextDow&&DOW[nextDow[1]]!=null){const d=DOW[nextDow[1]];const off=((d-today.getDay()+7)%7)||7;return iso(addDays(today,off));}
+  if(DOW[t]!=null){const d=DOW[t];const off=((d-today.getDay()+7)%7)||7;return iso(addDays(today,off));}
+  return s;
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────
+function saveCreds() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ asanaToken: $('asanaToken').value.trim(), projectGid, projectName }));
+  localStorage.setItem(KEYS_KEY, JSON.stringify({ groq: groqKey, openai: openaiKey, anthropic: anthropicKey, ollama: ollamaModel }));
+}
+function loadCreds() {
+  try {
+    const c = JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
+    const k = JSON.parse(localStorage.getItem(KEYS_KEY)||'{}');
+    if (c.asanaToken) $('asanaToken').value = c.asanaToken;
+    groqKey = k.groq||''; openaiKey = k.openai||''; anthropicKey = k.anthropic||''; ollamaModel = k.ollama||'qwen2.5:14b';
+    $('llmKey').value = provider==='openai' ? openaiKey : provider==='anthropic' ? anthropicKey : provider==='ollama' ? ollamaModel : groqKey;
+    return !!(c.asanaToken && (groqKey||openaiKey||anthropicKey||provider==='ollama'));
+  } catch { return false; }
+}
+function savedProjectGid() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}').projectGid||''; } catch { return ''; } }
+function activeLLMKey() { return provider==='openai' ? openaiKey : provider==='anthropic' ? anthropicKey : provider==='ollama' ? '' : groqKey; }
+
+// ── Dark mode ─────────────────────────────────────────────────────────────
+function applyTheme() {
+  document.body.classList.toggle('dark', darkMode);
+  $('dark-icon').innerHTML = darkMode
+    ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
+    : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+}
+function toggleDark() { darkMode=!darkMode; localStorage.setItem(THEME_KEY,darkMode?'dark':'light'); applyTheme(); }
+darkMode = localStorage.getItem(THEME_KEY)==='dark'; applyTheme();
+
+// ── Provider ──────────────────────────────────────────────────────────────
+async function setProvider(p) {
+  if (provider==='groq')      groqKey      = $('llmKey').value.trim();
+  if (provider==='openai')    openaiKey    = $('llmKey').value.trim();
+  if (provider==='anthropic') anthropicKey = $('llmKey').value.trim();
+  provider = p; localStorage.setItem(PROV_KEY, p);
+  document.querySelectorAll('.pvtab').forEach((b,i) => b.classList.toggle('active',(i===0&&p==='groq')||(i===1&&p==='openai')||(i===2&&p==='ollama')||(i===3&&p==='anthropic')));
+  const isOllama = p==='ollama';
+  $('llm-key-field').style.display    = isOllama ? 'none' : '';
+  $('ollama-model-field').style.display = isOllama ? '' : 'none';
+  if (!isOllama) {
+    const labels = { openai: 'OpenAI API Key', anthropic: 'Claude API Key', groq: 'Groq API Key' };
+    const phs    = { openai: 'sk-...',         anthropic: 'sk-ant-...',     groq: 'Groq API key' };
+    const vals   = { openai: openaiKey,        anthropic: anthropicKey,     groq: groqKey };
+    $('llm-key-label').textContent = labels[p] || labels.groq;
+    $('llmKey').placeholder = phs[p] || phs.groq;
+    $('llmKey').type = 'password';
+    $('llmKey').value = vals[p] ?? groqKey;
+  } else {
+    const sel = $('ollamaModelSelect');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const [modelsR, recR] = await Promise.all([
+        fetch('/ollama-models').then(r=>r.json()),
+        fetch('/recommend-model').then(r=>r.json()).catch(()=>null),
+      ]);
+      const rec = recR?.recommended || '';
+      const models = modelsR.models || [];
+      if (models.length || rec) {
+        const opts = models.map(m=>`<option value="${m}" ${m===ollamaModel?'selected':''}>${m}${m===rec?' ⭐ Recommended':''}</option>`);
+        if (rec && !models.includes(rec)) {
+          opts.push(`<option value="" disabled>— ⭐ Recommended for your ${recR.ramGb} GB system: ${rec} (run: ollama pull ${rec}) —</option>`);
+        }
+        sel.innerHTML = opts.join('');
+        ollamaModel = sel.value;
+      } else {
+        sel.innerHTML = '<option value="">No models installed</option>';
+      }
+    } catch { sel.innerHTML = '<option value="">Ollama not running</option>'; }
+  }
+}
+provider = localStorage.getItem(PROV_KEY)||'groq';
+fetch('/config').then(r=>r.json()).then(c => {
+  if (!c.useOllama) {
+    const tab = document.getElementById('provider-tab-ollama');
+    if (tab) tab.style.display = 'none';
+    if (provider === 'ollama') provider = 'groq';
+  }
+  setProvider(provider);
+}).catch(() => setProvider(provider));
+
+// ── Config / header ───────────────────────────────────────────────────────
+function toggleConfig() { $('config').classList.toggle('collapsed'); $('settingsBtn').classList.toggle('open',!$('config').classList.contains('collapsed')); }
+
+// ── Project picker ────────────────────────────────────────────────────────
+function toggleProjectPicker() { pickerOpen=!pickerOpen; $('project-dropdown').classList.toggle('open',pickerOpen); $('projectPickerBtn').classList.toggle('open',pickerOpen); }
+function renderProjectPicker() {
+  $('project-dropdown').innerHTML = allProjects.map((p,i) =>
+    `<div class="proj-item ${p.gid===projectGid?'active':''}" onclick="switchProject(${i})"><span class="proj-check">${p.gid===projectGid?'✓':''}</span><span>${p.name}</span></div>`
+  ).join('');
+}
+async function switchProject(idx) {
+  const p = allProjects[idx];
+  if (!p||p.gid===projectGid) { toggleProjectPicker(); return; }
+  projectGid=p.gid; projectName=p.name;
+  pickerOpen=false; $('project-dropdown').classList.remove('open'); $('projectPickerBtn').classList.remove('open');
+  $('status-pill').textContent='● '+p.name; saveCreds(); renderProjectPicker();
+  addMsg('agent',`Switched to <strong>${p.name}</strong>.`,'success');
+  cachedTasks=[]; cachedSections=[]; selectedTasks.clear(); selectMode=false; updateSelectMode(); expandedTasks.clear(); subtaskCache={};
+  if(panelOpen) renderPanel();
+  await fetchAndCacheTasks(true);
+}
+document.addEventListener('click', e => { if(pickerOpen&&!e.target.closest('.project-switcher')){ pickerOpen=false; $('project-dropdown').classList.remove('open'); $('projectPickerBtn').classList.remove('open'); }});
+
+// ── Panel core ────────────────────────────────────────────────────────────
+function togglePanel() { panelOpen=!panelOpen; $('app').classList.toggle('panel-open',panelOpen); $('task-panel').classList.toggle('open',panelOpen); $('panelBtn').classList.toggle('open',panelOpen); if(panelOpen&&cachedTasks.length) renderPanel(); }
+function setPanelFilter(f,btn) { panelFilter=f; document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); btn.classList.add('active'); renderPanel(); }
+function onPanelSearch(v) { panelSearch=v.trim().toLowerCase(); $('searchClear').classList.toggle('visible',!!panelSearch); renderPanel(); }
+function clearPanelSearch() { $('panelSearch').value=''; onPanelSearch(''); $('panelSearch').focus(); }
+
+async function refreshPanel() { const b=$('refreshBtn'); b.classList.add('spinning'); await fetchAndCacheTasks(false, true); b.classList.remove('spinning'); }
+
+async function fetchAndCacheTasks(checkOD=false, force=false) {
+  if (!projectGid) return;
+  if (!force && Date.now()-lastFetchedAt < CACHE_TTL_MS && cachedTasks.length) return;
+  try {
+    const [tr,sr] = await Promise.all([
+      asana('GET',`/projects/${projectGid}/tasks?opt_fields=name,gid,completed,assignee.name,assignee.gid,due_on,memberships.project.gid,memberships.section.name,memberships.section.gid,num_subtasks&limit=100`),
+      asana('GET',`/projects/${projectGid}/sections?opt_fields=name,gid`)
+    ]);
+    if (tr.errors||sr.errors) return;
+    cachedSections = sr.data||[];
+    const secById = Object.fromEntries(cachedSections.map(s=>[s.gid,s.name]));
+    cachedTasks = (tr.data||[]).map(t => {
+      const m = t.memberships?.find(m => m.project?.gid === projectGid) || t.memberships?.[0];
+      t._section = m?.section?.name || (m?.section?.gid && secById[m.section.gid]) || null;
+      return t;
+    });
+    lastFetchedAt = Date.now();
+    for(const gid of Object.keys(subtaskCache)) if(!cachedTasks.some(t=>t.gid===gid)) delete subtaskCache[gid];
+    renderAssigneeChips(); renderBulkSectionSelect();
+    if(panelOpen) renderPanel();
+    if(checkOD) checkOverdue();
+  } catch {}
+}
+
+function checkOverdue() {
+  const today=new Date().toISOString().slice(0,10);
+  const od=cachedTasks.filter(t=>!t.completed&&t.due_on&&t.due_on<today);
+  if(!od.length) return;
+  const names=od.slice(0,3).map(t=>`<strong>${t.name}</strong>`).join(', ');
+  addMsg('agent',`⚠️ <strong>${od.length}</strong> overdue task${od.length>1?'s':''}: ${names}${od.length>3?` and ${od.length-3} more`:''}. `,'error');
+}
+
+// ── Assignee chips ────────────────────────────────────────────────────────
+function renderAssigneeChips() {
+  const names = [...new Set(cachedTasks.filter(t=>t.assignee).map(t=>t.assignee.name))].sort();
+  const wrap = $('assignee-chips');
+  if (!names.length) { wrap.innerHTML=''; return; }
+  wrap.innerHTML = ['all',...names].map(n =>
+    `<span class="a-chip ${assigneeFilter===n?'active':''}" onclick="setAssigneeFilter('${n.replace(/'/g,"\\'")}')">
+      ${n==='all'?'All':n.split(' ')[0]}
+    </span>`
+  ).join('');
+}
+function setAssigneeFilter(n) { assigneeFilter=n; renderAssigneeChips(); renderPanel(); }
+
+// ── Bulk select ───────────────────────────────────────────────────────────
+function toggleSelectMode() { selectMode=!selectMode; if(!selectMode){selectedTasks.clear();} updateSelectMode(); renderPanel(); }
+function updateSelectMode() {
+  $('selectBtn').classList.toggle('active',selectMode);
+  $('bulk-toolbar').classList.toggle('visible',selectMode&&selectedTasks.size>0);
+  $('bulk-count').textContent=selectedTasks.size+' selected';
+}
+function toggleTaskSelect(gid) {
+  if(selectedTasks.has(gid)) selectedTasks.delete(gid); else selectedTasks.add(gid);
+  updateSelectMode(); renderPanel();
+}
+function clearSelection() { selectedTasks.clear(); selectMode=false; updateSelectMode(); renderPanel(); }
+
+async function bulkComplete() {
+  const gids=[...selectedTasks]; if(!gids.length) return;
+  await Promise.all(gids.map(g=>asana('PUT',`/tasks/${g}`,{data:{completed:true}})));
+  addMsg('agent',`Marked <strong>${gids.length}</strong> task${gids.length>1?'s':''} as complete.`,'success');
+  clearSelection(); fetchAndCacheTasks(false, true);
+}
+async function bulkMove(sectionGid) {
+  if(!sectionGid) return; $('bulk-section').value='';
+  const gids=[...selectedTasks]; if(!gids.length) return;
+  const sec=cachedSections.find(s=>s.gid===sectionGid);
+  await Promise.all(gids.map(g=>asana('POST',`/sections/${sectionGid}/addTask`,{data:{task:g}})));
+  addMsg('agent',`Moved <strong>${gids.length}</strong> task${gids.length>1?'s':''} to <strong>${sec?.name||'section'}</strong>.`,'success');
+  clearSelection(); fetchAndCacheTasks(false, true);
+}
+function renderBulkSectionSelect() {
+  const sel=$('bulk-section');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">Move to…</option>'+cachedSections.map(s=>`<option value="${s.gid}">${s.name}</option>`).join('');
+  sel.value=cur;
+}
+
+// ── Sub-task expand ───────────────────────────────────────────────────────
+async function expandTask(gid) {
+  if (expandedTasks.has(gid)) { expandedTasks.delete(gid); renderPanel(); return; }
+  expandedTasks.add(gid); renderPanel();
+  if (!subtaskCache[gid]) {
+    const r = await asana('GET', `/tasks/${gid}/subtasks?opt_fields=name,gid,completed,assignee.name,due_on&limit=100`);
+    subtaskCache[gid] = r.errors ? [] : (r.data||[]);
+  }
+  renderPanel();
+}
+
+// ── Panel render ──────────────────────────────────────────────────────────
+function renderPanel() {
+  const body=$('panel-body');
+  let tasks = panelFilter==='open' ? cachedTasks.filter(t=>!t.completed)
+            : panelFilter==='done' ? cachedTasks.filter(t=> t.completed)
+            : cachedTasks;
+  if(panelSearch) tasks=tasks.filter(t=>t.name.toLowerCase().includes(panelSearch));
+  if(assigneeFilter!=='all') tasks=tasks.filter(t=>t.assignee?.name===assigneeFilter);
+
+  if(!tasks.length){ body.innerHTML=`<div class="panel-empty">No tasks found.</div>`; return; }
+
+  const secOrder=cachedSections.map(s=>s.name);
+  const bySection={};
+  tasks.forEach(t=>{ const s=t._section||'No section'; (bySection[s]=bySection[s]||[]).push(t); });
+  const order=[...secOrder.filter(s=>bySection[s]),...Object.keys(bySection).filter(s=>!secOrder.includes(s))];
+
+  body.innerHTML=order.map(sec=>{
+    const items=(bySection[sec]||[]).map(t=>{
+      const done=t.completed, over=!done&&isOverdue(t.due_on), sel=selectedTasks.has(t.gid), expanded=expandedTasks.has(t.gid);
+      const dot = selectMode
+        ? `<div class="task-checkbox ${sel?'checked':''}" onclick="event.stopPropagation();toggleTaskSelect('${t.gid}')"></div>`
+        : `<div class="task-dot ${done?'done':''}"></div>`;
+      const av=t.assignee?`<span class="avatar" style="background:${avatarColor(t.assignee.name)}" title="${t.assignee.name}">${initials(t.assignee.name)}</span>`:'';
+      const due=t.due_on?`<span class="due-tag ${over?'overdue':''}">${t.due_on}</span>`:'';
+      const click=selectMode?`onclick="toggleTaskSelect('${t.gid}')"` :`onclick="openTaskDetail('${t.gid}')"`;
+      const expandBtn = t.num_subtasks>0 && !selectMode
+        ? `<button class="task-expand ${expanded?'open':''}" onclick="event.stopPropagation();expandTask('${t.gid}')" title="${t.num_subtasks} sub-task${t.num_subtasks>1?'s':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>` : '';
+      let subtasksHtml = '';
+      if (t.num_subtasks>0 && expanded) {
+        const subs = subtaskCache[t.gid];
+        if (!subs) {
+          subtasksHtml = '<div class="subtasks-wrap"><div class="subtask-row"><span style="font-size:11px;color:var(--text-3)">Loading…</span></div></div>';
+        } else {
+          const rows = subs.map(s=>{
+            const sDone=s.completed, sOver=!sDone&&isOverdue(s.due_on);
+            const sAv=s.assignee?`<span class="avatar" style="background:${avatarColor(s.assignee.name)}" title="${s.assignee.name}">${initials(s.assignee.name)}</span>`:'';
+            const sDue=s.due_on?`<span class="due-tag ${sOver?'overdue':''}">${s.due_on}</span>`:'';
+            return `<div class="subtask-row" onclick="openTaskDetail('${s.gid}')"><div class="task-dot ${sDone?'done':''}"></div><div class="task-info"><span class="task-name ${sDone?'done':''}">${s.name}</span><div class="task-meta">${sAv}${sDue}</div></div></div>`;
+          }).join('');
+          subtasksHtml = `<div class="subtasks-wrap">${rows||'<div class="subtask-row"><span style="font-size:11px;color:var(--text-3)">No sub-tasks.</span></div>'}</div>`;
+        }
+      }
+      return `<div class="task-item ${sel?'selected':''}" ${click}>${dot}<div class="task-info"><span class="task-name ${done?'done':''}">${t.name}</span><div class="task-meta">${av}${due}</div></div>${expandBtn}</div>${subtasksHtml}`;
+    }).join('');
+    return `<div class="section-group"><span class="section-label">${sec}</span>${items}</div>`;
+  }).join('');
+}
+
+// ── Task detail ───────────────────────────────────────────────────────────
+function isImageAttachment(a) { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a?.name||''); }
+async function openTaskDetail(gid) {
+  if(selectMode) { toggleTaskSelect(gid); return; }
+  currentDetailGid=gid; clearDetailComposerImage();
+  const task=cachedTasks.find(t=>t.gid===gid);
+  $('detail-title').textContent=task?.name||'Task Detail';
+  $('detail-body').innerHTML='<div class="detail-loading">Loading…</div>';
+  $('task-detail').classList.add('open');
+  try {
+    const [tr,sr,cr,ar]=await Promise.all([
+      asana('GET',`/tasks/${gid}?opt_fields=name,notes,completed,assignee.name,due_on,memberships.section.name`),
+      asana('GET',`/tasks/${gid}/subtasks?opt_fields=name,gid,completed,assignee.name&limit=50`),
+      asana('GET',`/tasks/${gid}/stories?opt_fields=text,created_at,created_by.name,resource_subtype&limit=30`),
+      asana('GET',`/tasks/${gid}/attachments?opt_fields=name,download_url,view_url,host,resource_subtype&limit=50`),
+    ]);
+    const t=tr.data||{}, subtasks=sr.data||[], comments=(cr.data||[]).filter(s=>s.resource_subtype==='comment'), attachments=ar.data||[];
+    $('detail-title').textContent=t.name||'Task Detail';
+    const sec=t.memberships?.[0]?.section?.name, due=t.due_on, over=due&&isOverdue(due);
+    const meta=[
+      t.assignee?`<div class="detail-meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg><span class="detail-meta-label">Assignee</span><span>${t.assignee.name}</span></div>`:'',
+      due?`<div class="detail-meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span class="detail-meta-label">Due</span><span style="${over?'color:var(--red);font-weight:600':''}">${due}${over?' · overdue':''}</span></div>`:'',
+      sec?`<div class="detail-meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="detail-meta-label">Section</span><span>${sec}</span></div>`:'',
+      `<div class="detail-meta-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><span class="detail-meta-label">Status</span><span>${t.completed?'Done':'Open'}</span></div>`,
+    ].filter(Boolean).join('');
+    const notes=`<div><div class="detail-section-title" style="margin-bottom:6px">Description</div><div class="detail-notes ${t.notes?'':'empty'}">${t.notes?t.notes.replace(/</g,'&lt;'):'No description.'}</div></div>`;
+    const subs=subtasks.length?`<div><div class="detail-section-title" style="margin-bottom:6px">Sub-tasks (${subtasks.length})</div>${subtasks.map(s=>`<div class="detail-subtask-item ${s.completed?'done':''}" onclick="openTaskDetail('${s.gid}')"><div class="task-dot ${s.completed?'done':''}" style="flex-shrink:0"></div><span>${s.name}</span>${s.assignee?`<span style="margin-left:auto;font-size:11px;color:var(--text-3)">${s.assignee.name}</span>`:''}<svg style="width:9px;height:9px;flex-shrink:0;color:var(--text-3);margin-left:${s.assignee?'4px':'auto'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></div>`).join('')}</div>`:'';
+    const atts=attachments.length?`<div><div class="detail-section-title" style="margin-bottom:6px">Attachments (${attachments.length})</div><div class="attachments-grid">${attachments.map(a=>{const url=a.view_url||a.download_url||'';const safeName=(a.name||'file').replace(/</g,'&lt;');return isImageAttachment(a)&&url?`<div class="att-thumb" onclick="openLightbox('${url.replace(/'/g,"\\'")}')" title="${safeName}"><img src="${url}" alt="${safeName}" loading="lazy"/></div>`:`<a class="att-thumb" href="${url}" target="_blank" rel="noopener" title="${safeName}"><div class="att-file">${safeName}</div></a>`;}).join('')}</div></div>`:'';
+    const stories=comments.length?`<div><div class="detail-section-title" style="margin-bottom:6px">Comments (${comments.length})</div>${comments.map(s=>`<div class="story-item"><div class="story-meta"><span class="avatar" style="background:${avatarColor(s.created_by?.name)};width:20px;height:20px;font-size:9px">${initials(s.created_by?.name)}</span><span class="story-author">${s.created_by?.name||'Unknown'}</span><span class="story-time">${fmtDate(s.created_at)}</span></div><div class="story-text">${s.text.replace(/</g,'&lt;')}</div></div>`).join('')}</div>`:'';
+    const composer=`<div><div class="detail-section-title" style="margin-bottom:6px">Add comment</div><div class="composer"><textarea id="detail-comment-text" placeholder="Write a comment… (paste an image to attach)" onpaste="onComposerPaste(event)" oninput="updateDetailComposerSend()"></textarea><div id="detail-image-preview" class="img-chip" style="display:none"><img id="detail-image-thumb" alt=""/><span id="detail-image-name"></span><button type="button" class="img-chip-x" onclick="clearDetailComposerImage()">×</button></div><div class="composer-actions"><button type="button" class="icon-btn" onclick="$('detail-image-input').click()" title="Attach image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg></button><input type="file" id="detail-image-input" accept="image/*" style="display:none" onchange="onDetailComposerFile(this)"/><button type="button" class="send-btn" id="detail-send-btn" onclick="submitDetailComposer()" disabled>Send</button></div></div></div>`;
+    $('detail-body').innerHTML=`<div class="detail-meta">${meta}</div>${notes}${subs}${atts}${stories}${composer}`;
+  } catch(e) { $('detail-body').innerHTML=`<div class="detail-loading">Failed: ${e.message}</div>`; }
+}
+function closeTaskDetail() { $('task-detail').classList.remove('open'); currentDetailGid=null; clearDetailComposerImage(); }
+function updateDetailComposerSend() {
+  const txt=$('detail-comment-text')?.value.trim()||'';
+  const btn=$('detail-send-btn'); if(btn) btn.disabled=!txt && !detailComposerImage;
+}
+function onDetailComposerFile(input) {
+  const f=input.files?.[0]; if(!f) return; setDetailComposerImage(f);
+}
+function setDetailComposerImage(file) {
+  detailComposerImage=file;
+  const url=URL.createObjectURL(file);
+  $('detail-image-thumb').src=url;
+  $('detail-image-name').textContent=file.name||'image';
+  $('detail-image-preview').style.display='inline-flex';
+  updateDetailComposerSend();
+}
+function clearDetailComposerImage() {
+  detailComposerImage=null;
+  const inp=$('detail-image-input'); if(inp) inp.value='';
+  const prev=$('detail-image-preview'); if(prev) prev.style.display='none';
+  const thumb=$('detail-image-thumb'); if(thumb && thumb.src && thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
+  updateDetailComposerSend();
+}
+function onComposerPaste(e) {
+  const items=e.clipboardData?.items||[];
+  for(const it of items) {
+    if(it.type && it.type.startsWith('image/')) {
+      const f=it.getAsFile(); if(f) { setDetailComposerImage(f); e.preventDefault(); return; }
+    }
+  }
+}
+async function submitDetailComposer() {
+  const gid=currentDetailGid; if(!gid) return;
+  const txt=$('detail-comment-text').value.trim();
+  const file=detailComposerImage;
+  if(!txt && !file) return;
+  const btn=$('detail-send-btn'); btn.disabled=true; btn.textContent='Sending…';
+  const errs=[];
+  if(txt) {
+    try { const r=await asana('POST',`/tasks/${gid}/stories`,{data:{text:txt}}); if(r.errors) throw new Error(r.errors[0].message); }
+    catch(e) { errs.push('comment: '+e.message); }
+  }
+  if(file) {
+    try { await uploadAttachment(gid,file); }
+    catch(e) { errs.push('image: '+e.message); }
+  }
+  btn.textContent='Send';
+  if(errs.length) { addMsg('agent','Some parts failed → '+errs.join(' · '),'error'); btn.disabled=false; }
+  else { $('detail-comment-text').value=''; clearDetailComposerImage(); openTaskDetail(gid); }
+}
+function openLightbox(url) {
+  const lb=document.createElement('div'); lb.className='lightbox';
+  lb.innerHTML=`<img src="${url}" alt=""/>`;
+  lb.onclick=()=>lb.remove();
+  document.body.appendChild(lb);
+}
+
+// ── Quick-add ─────────────────────────────────────────────────────────────
+function openQuickAdd() {
+  $('qa-name').value=''; $('qa-assignee').value=''; $('qa-due').value=''; $('qa-submit').disabled=true;
+  clearQaImage();
+  $('qa-section').innerHTML='<option value="">No section</option>'+cachedSections.map(s=>`<option value="${s.gid}">${s.name}</option>`).join('');
+  $('quick-add-panel').classList.add('open');
+  setTimeout(()=>$('qa-name').focus(),250);
+}
+function closeQuickAdd() { $('quick-add-panel').classList.remove('open'); clearQaImage(); }
+function onQaImageChange(input) {
+  const f=input.files?.[0]; if(!f) { clearQaImage(); return; }
+  const url=URL.createObjectURL(f);
+  $('qa-image-thumb').src=url;
+  $('qa-image-name').textContent=f.name;
+  $('qa-image-preview').style.display='inline-flex';
+}
+function clearQaImage() {
+  const inp=$('qa-image'); if(inp) inp.value='';
+  const prev=$('qa-image-preview'); if(prev) prev.style.display='none';
+  const thumb=$('qa-image-thumb'); if(thumb && thumb.src && thumb.src.startsWith('blob:')) URL.revokeObjectURL(thumb.src);
+}
+async function submitQuickAdd() {
+  const name=$('qa-name').value.trim(); if(!name) return;
+  const btn=$('qa-submit'); btn.disabled=true; btn.textContent='Creating…';
+  try {
+    const data={name,projects:[projectGid]};
+    const secGid=$('qa-section').value; if(secGid) data.memberships=[{project:projectGid,section:secGid}];
+    const assignee=$('qa-assignee').value.trim(); if(assignee) data.assignee=assignee;
+    const due=$('qa-due').value; if(due) data.due_on=due;
+    const r=await asana('POST','/tasks',{data});
+    if(r.errors) throw new Error(r.errors[0].message);
+    const newGid=r.data?.gid;
+    const file=$('qa-image').files?.[0];
+    let imgNote='';
+    if(file && newGid) {
+      btn.textContent='Uploading…';
+      try { await uploadAttachment(newGid,file); imgNote=' (with image)'; }
+      catch(e) { imgNote=` (image upload failed: ${e.message})`; }
+    }
+    addMsg('agent',`Created task <strong>${name}</strong>${imgNote}.`,'success');
+    closeQuickAdd(); fetchAndCacheTasks(false, true);
+  } catch(e) {
+    addMsg('agent','Failed to create task: '+e.message,'error');
+  }
+  btn.disabled=false; btn.textContent='Create Task';
+}
+
+// ── Messages ──────────────────────────────────────────────────────────────
+function addMsg(role, html, type) {
+  const wrap=document.createElement('div'); wrap.className='msg '+role;
+  const b=document.createElement('div'); b.className='bubble'+(type?' '+type:''); b.innerHTML=html;
+  const t=document.createElement('span'); t.className='msg-time'; t.textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  wrap.appendChild(b); wrap.appendChild(t);
+  $('messages').appendChild(wrap); $('messages').scrollTop=$('messages').scrollHeight;
+  return b;
+}
+function showTyping() { const w=document.createElement('div'); w.className='msg agent'; w.id='typing'; w.innerHTML='<div class="bubble"><div class="typing-wrap"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div></div>'; $('messages').appendChild(w); $('messages').scrollTop=$('messages').scrollHeight; }
+function removeTyping() { const t=$('typing'); if(t)t.remove(); }
+function fill(el) { $('userInput').value=el.textContent; $('userInput').focus(); }
+function askCapabilities(btn) {
+  btn.disabled=true; addMsg('user','What can I ask you?'); showTyping();
+  setTimeout(()=>{
+    removeTyping();
+    addMsg('agent',`Here's what I can do:<div class="action-log" style="margin-top:10px">
+<div class="action-item">📋 <strong>List tasks</strong> — "What tasks do I have?" / "What's done?"</div>
+<div class="action-item">🔍 <strong>Sub-tasks</strong> — "Show me sub-tasks to do" / "All sub-tasks of X"</div>
+<div class="action-item">✅ <strong>Complete / reopen</strong> — "Mark X as complete" / "Reopen X"</div>
+<div class="action-item">✅ <strong>Complete a sub-task</strong> — "Mark sub-task Y of X as done"</div>
+<div class="action-item">➕ <strong>Create a task</strong> — "Create a task called Fix login bug"</div>
+<div class="action-item">📅 <strong>Set due date</strong> — "Due next Monday" / "Due in 3 days" / "Due end of week"</div>
+<div class="action-item">👤 <strong>Assign</strong> — "Assign X to jimmy@work.com"</div>
+<div class="action-item">💬 <strong>Comment</strong> — "Comment 'Ready to test' on X"</div>
+<div class="action-item">🗂 <strong>Move section</strong> — "Move X to In Progress"</div>
+<div class="action-item">🏷 <strong>Tags</strong> — "Tag X as urgent" / "Untag X"</div>
+<div class="action-item">🔀 <strong>Switch project</strong> — "Switch to Agustin Project"</div>
+<div class="action-item">↩️ <strong>Undo</strong> — "Undo" reverses the last action</div>
+<div class="action-item">📊 <strong>Standup</strong> — "Generate my daily standup"</div>
+</div>`);
+  },600);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────
+async function asana(method,endpoint,body) { const r=await fetch('/asana',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,endpoint,body,token:asanaToken})}); return r.json(); }
+async function uploadAttachment(taskGid, file) {
+  const fd=new FormData();
+  fd.append('token',asanaToken);
+  fd.append('parent',taskGid);
+  fd.append('file',file,file.name||'image.png');
+  const r=await fetch('/asana-attach',{method:'POST',body:fd});
+  const d=await r.json();
+  if(d.errors) throw new Error(d.errors[0].message);
+  if(d.error) throw new Error(d.error.message||d.error);
+  return d.data;
+}
+// Tell the server to preload the selected Ollama model into VRAM so the first real request isn't a cold load.
+async function warmCurrentModel() {
+  if (provider !== 'ollama' || !ollamaModel) return;
+  try { await fetch('/warm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model: ollamaModel})}); } catch {}
+}
+
+// Pull "answer":"..." out of a partial JSON string so we can render it before the full response arrives.
+function extractStreamingAnswer(raw) {
+  const m = raw.match(/"answer"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (!m) return null;
+  const inner = m[1];
+  try { return JSON.parse('"' + inner + '"'); }
+  catch {
+    return inner
+      .replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, c) => String.fromCharCode(parseInt(c, 16)));
+  }
+}
+
+async function callLLM(messages, onPartial) {
+  const key=activeLLMKey();
+  if(!key && provider!=='ollama') throw new Error('No API key set.');
+  const wantsStream = typeof onPartial === 'function';
+  const body={messages,llmKey:key,provider,stream:wantsStream};
+  if(provider==='ollama') body.model=ollamaModel||'qwen2.5:14b';
+  const r=await fetch('/llm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+
+  if (!wantsStream) {
+    const d=await r.json(); if(d.error) throw new Error(d.error.message||JSON.stringify(d.error));
+    return d.choices?.[0]?.message?.content||'';
+  }
+
+  if (!r.ok || !r.body) {
+    const d = await r.json().catch(()=>({error:`HTTP ${r.status}`}));
+    throw new Error(d.error?.message || d.error || `HTTP ${r.status}`);
+  }
+
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', full = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line || !line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      try {
+        const obj = JSON.parse(data);
+        const delta = obj.choices?.[0]?.delta?.content || '';
+        if (delta) { full += delta; onPartial(full); }
+      } catch {}
+    }
+  }
+  return full;
+}
+function fuzzy(list,name) {
+  if(!name||!list) return null;
+  const n=name.toLowerCase().trim();
+  const safe=i=>i.name?(i.name.toLowerCase()):'';
+  const direct = list.find(i=>safe(i)===n)
+    ||list.find(i=>safe(i).startsWith(n))
+    ||list.find(i=>safe(i)&&safe(i).includes(n))
+    ||list.find(i=>safe(i)&&n.includes(safe(i)))
+    ||list.find(i=>{ const w=n.split(/\s+/).filter(x=>x.length>2); return w.length&&w.every(x=>safe(i).includes(x)); })
+    ||list.find(i=>{ const w=n.split(/\s+/).filter(x=>x.length>2); return w.length&&w.some(x=>safe(i).includes(x)); });
+  if(direct) return direct;
+  const toks=s=>new Set((s||'').split(/[\s\-_/]+/).filter(w=>w.length>1));
+  const a=toks(n); if(!a.size) return null;
+  let best=null, bestScore=0;
+  for(const i of list){const b=toks(safe(i)); if(!b.size) continue; let inter=0; for(const w of a) if(b.has(w)) inter++; const score=inter/Math.max(a.size,b.size); if(score>bestScore){bestScore=score; best=i;}}
+  return bestScore>=0.5?best:null;
+}
+
+// ── Connect ───────────────────────────────────────────────────────────────
+async function connect() {
+  const tok=$('asanaToken').value.trim(), key=$('llmKey').value.trim();
+  if(!tok||(provider!=='ollama'&&!key)){addMsg('agent','Please fill in your Asana token and API key.','error');return;}
+  if(provider==='groq') groqKey=key;
+  else if(provider==='openai') openaiKey=key;
+  else if(provider==='anthropic') anthropicKey=key;
+  else if(provider==='ollama') ollamaModel=$('ollamaModelSelect').value||'qwen2.5:14b';
+  const btn=$('connectBtn'); btn.textContent='Connecting…'; btn.disabled=true;
+  try {
+    asanaToken=tok;
+    warmCurrentModel();
+    const ws=await asana('GET','/workspaces?opt_fields=name,gid&limit=100');
+    if(ws.errors) throw new Error(ws.errors[0].message);
+    if(!ws.data?.length) throw new Error('No workspaces found.');
+    workspaceGid = ws.data[0].gid;
+    // Asana treats each workspace's "My Tasks" list like a project, so it can be selected like one.
+    const projAndMyTasks = await Promise.all(ws.data.flatMap(w => [
+      asana('GET',`/projects?workspace=${w.gid}&opt_fields=name,gid&limit=100&archived=false`),
+      asana('GET',`/users/me/user_task_list?workspace=${w.gid}&opt_fields=name,gid`).catch(()=>({data:null}))
+    ]));
+    const projects=[], myTasksLists=[];
+    ws.data.forEach((w,i)=>{
+      const projR=projAndMyTasks[i*2], mtR=projAndMyTasks[i*2+1];
+      if(projR.errors) throw new Error(projR.errors[0].message);
+      (projR.data||[]).forEach(p=>projects.push(p));
+      if(mtR?.data?.gid) myTasksLists.push({gid:mtR.data.gid,name:ws.data.length>1?`📥 My Tasks · ${w.name}`:'📥 My Tasks'});
+    });
+    if(!projects.length && !myTasksLists.length) throw new Error('No projects found.');
+    allProjects=[...myTasksLists,...projects.sort((a,b)=>a.name.localeCompare(b.name))];
+    const [me2, usersR, tagsR] = await Promise.all([
+      asana('GET','/users/me?opt_fields=name,email,gid'),
+      asana('GET',`/users?workspace=${workspaceGid}&opt_fields=name,gid,email&limit=100`),
+      asana('GET',`/workspaces/${workspaceGid}/tags?opt_fields=name,gid&limit=100`)
+    ]);
+    if(me2.errors) throw new Error(me2.errors[0].message);
+    me = me2.data;
+    workspaceUsers = (usersR.data||[]).filter(u=>u.email);
+    workspaceTags = tagsR.data||[];
+    const found=allProjects.find(p=>p.gid===savedProjectGid())||allProjects[0];
+    projectGid=found.gid; projectName=found.name; saveCreds();
+    $('status-pill').textContent='● '+found.name; $('status-pill').className='connected';
+    $('config').classList.add('collapsed'); $('settingsBtn').classList.remove('open');
+    $('panelBtn').disabled=false; $('projectPickerBtn').disabled=false;
+    renderProjectPicker();
+    const wb=$('welcome-bubble'); if(wb) wb.closest('.msg').remove();
+    addMsg('agent',`Connected as <strong>${me.name}</strong> → <strong>${found.name}</strong>`,'success');
+    addMsg('agent','What can I do for you?');
+    btn.textContent='Connected ✓'; setTimeout(()=>{btn.textContent='Connect';btn.disabled=false;},2500);
+    await fetchAndCacheTasks(true);
+  } catch(e) {
+    $('status-pill').textContent='Error'; $('status-pill').className='error';
+    addMsg('agent','Could not connect: '+e.message,'error');
+    btn.textContent='Connect'; btn.disabled=false; asanaToken='';
+  }
+}
+if(loadCreds()) { $('welcome-bubble').textContent = "Hi, I'm Minisana! Reconnecting…"; connect(); }
+
+// ── Chat image staging ───────────────────────────────────────────────────
+function onChatImageChange(input) { const f=input.files?.[0]; if(f) setChatImage(f); input.value=''; }
+function onChatInputPaste(e) {
+  const items=e.clipboardData?.items||[];
+  for(const it of items) {
+    if(it.type && it.type.startsWith('image/')) {
+      const f=it.getAsFile(); if(f) { setChatImage(f); e.preventDefault(); return; }
+    }
+  }
+}
+function setChatImage(file) {
+  pendingChatImage=file;
+  const url=URL.createObjectURL(file);
+  const bar=$('chat-image-bar');
+  bar.innerHTML=`<div class="img-chip"><img src="${url}" alt=""/><span>${(file.name||'pasted image').replace(/</g,'&lt;')}</span><button type="button" class="img-chip-x" onclick="clearChatImage()">×</button></div>`;
+  bar.style.display='block';
+  $('userInput').focus();
+}
+function clearChatImage() {
+  pendingChatImage=null;
+  const bar=$('chat-image-bar');
+  if(bar) {
+    const img=bar.querySelector('img');
+    if(img && img.src && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+    bar.innerHTML=''; bar.style.display='none';
+  }
+}
+function attachTargetGid() {
+  const r=recentContext[0]; if(!r) return null;
+  return r.gid || r.parentGid || null;
+}
+async function attachStaged(image) {
+  if(!image) return null;
+  const gid=attachTargetGid();
+  if(!gid) return { ok:false, msg:"Image staged but no task in context — mention the task in your message." };
+  try { await uploadAttachment(gid,image); return { ok:true, msg:`Attached image to <strong>${recentContext[0].name||'task'}</strong>.` }; }
+  catch(e) { return { ok:false, msg:'Image upload failed: '+e.message }; }
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────
+async function send() {
+  const input=$('userInput'), text=input.value.trim();
+  const stagedImage=pendingChatImage;
+  if((!text && !stagedImage)||busy) return;
+  if(!asanaToken){addMsg('agent','Please connect first.','error');return;}
+  if(stagedImage) {
+    const url=URL.createObjectURL(stagedImage);
+    const safeText=text.replace(/</g,'&lt;');
+    addMsg('user',`<img src="${url}" alt="" style="max-width:180px;border-radius:6px;display:block;margin-bottom:${text?'6px':'0'}"/>${safeText}`);
+  } else {
+    addMsg('user',text);
+  }
+  input.value=''; input.style.height='auto'; clearChatImage();
+  busy=true; $('sendBtn').disabled=true;
+
+  if(stagedImage && !text) {
+    const res=await attachStaged(stagedImage);
+    addMsg('agent',res.msg, res.ok?'success':'error');
+    busy=false; $('sendBtn').disabled=false; return;
+  }
+
+  showTyping();
+
+  try {
+    await fetchAndCacheTasks();
+    const tasks=cachedTasks, sections=cachedSections;
+
+    const toSum=t=>({name:t.name,assignee:t.assignee?{name:t.assignee.name,email:t.assignee.email}:null,due:t.due_on||null,section:t._section||null,num_subtasks:t.num_subtasks||0});
+    const openTasks=tasks.filter(t=>!t.completed).map(toSum);
+    const doneTasks=tasks.filter(t=> t.completed).map(toSum);
+    const today=new Date().toISOString().slice(0,10);
+    const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+
+    const histCtx = chatHistory.length
+      ? '\n=== RECENT CONVERSATION ===\n'+chatHistory.map(m=>`${m.role==='user'?'User':'Minisana'}: ${m.content}`).join('\n')+'\n'
+      : '';
+    const recentCtx = recentContext.length
+      ? '\n=== RECENTLY SHOWN — check this FIRST to resolve "it"/"that"/"both"/"those"/"them" ===\n'+recentContext.map(r=>r.type==='subtask'?`subtask "${r.name}" (parent task: "${r.parent}")`:`task "${r.name}"`).join('\n')+'\n'
+      : '';
+
+    // Trim heuristics — only include sections relevant to the current message to shrink prompt size for local LLMs.
+    const tl = text.toLowerCase();
+    const includeDone    = /done|finish|complet|did|standup|yesterday|past|history|recap/.test(tl);
+    const includeTags    = /\btag(s|ged)?\b|\blabel\b|categor|urgent|priority|important/.test(tl) || workspaceTags.some(t=>t.name&&tl.includes(t.name.toLowerCase()));
+    const includeMembers = /assign|@|email|follower|delegate|who\b|team\b/.test(tl) || workspaceUsers.some(u=>u.name&&tl.includes(u.name.toLowerCase()));
+
+    const stateMsg = `=== STATE ===
+User: ${me?.name} <${me?.email}>
+Project: "${projectName}"
+Today: ${today}
+Tomorrow: ${tomorrow}
+
+=== INCOMPLETE TASKS ===
+${JSON.stringify(openTasks)}
+${includeDone ? `\n=== COMPLETED TASKS ===\n${JSON.stringify(doneTasks)}\n` : ''}
+=== SECTIONS ===
+${JSON.stringify(sections.map(s=>s.name))}
+
+=== AVAILABLE PROJECTS ===
+${JSON.stringify(allProjects.map(p=>p.name))}
+${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}\n` : ''}${includeMembers ? `\n=== TEAM MEMBERS ===\n${JSON.stringify(workspaceUsers.map(u=>({name:u.name,email:u.email})))}\n` : ''}${histCtx}${recentCtx}`;
+
+    // Stream the response; render the "answer" field progressively as tokens arrive.
+    let liveBubble = null;
+    const onPartial = (full) => {
+      const partial = extractStreamingAnswer(full);
+      if (partial == null) return;
+      if (!liveBubble) { removeTyping(); liveBubble = addMsg('agent', ''); }
+      liveBubble.innerHTML = partial;
+      const m = $('messages'); m.scrollTop = m.scrollHeight;
+    };
+
+    const raw = await callLLM([
+      {role:'system', content: RULES_BLOCK},
+      {role:'system', content: stateMsg},
+      {role:'user',   content: text}
+    ], onPartial);
+    let parsed;
+    try { parsed = JSON.parse(raw.replace(/```json|```/g,'').trim()); }
+    catch {
+      if (liveBubble) liveBubble.closest('.msg')?.remove();
+      throw new Error("Couldn't parse response. Try rephrasing.");
+    }
+    removeTyping();
+
+    if(parsed?.answer) {
+      if (liveBubble) liveBubble.innerHTML = parsed.answer;
+      else addMsg('agent', parsed.answer);
+      chatHistory.push({role:'user',content:text},{role:'agent',content:stripHtml(parsed.answer)});
+      if(chatHistory.length>30) chatHistory.splice(0,chatHistory.length-30);
+      const answerLower=parsed.answer.toLowerCase();
+      const mentioned=cachedTasks.filter(t=>t.name&&answerLower.includes(t.name.toLowerCase()));
+      const unnamedMentioned=(answerLower.includes('unnamed')||answerLower.includes('no name'))
+        ?cachedTasks.filter(t=>!t.name||t.name.trim()===''):[];
+      const allMentioned=[...mentioned,...unnamedMentioned.filter(t=>!mentioned.includes(t))];
+      if(allMentioned.length) recentContext=allMentioned.slice(0,10).map(t=>({type:'task',name:t.name||'',gid:t.gid}));
+      if(stagedImage) addMsg('agent',"I didn't attach the image — your message looked like a question. Try again with something like \"add this image to <task>\".",'error');
+      busy=false; $('sendBtn').disabled=false; return;
+    }
+
+    // Streaming may have produced a placeholder bubble if the model started with "answer" before pivoting — discard it.
+    if (liveBubble) liveBubble.closest('.msg')?.remove();
+
+    const actions=Array.isArray(parsed)?parsed:(parsed.actions||[]);
+    if(!actions.length||actions.every(a=>a.action==='unknown')){
+      addMsg('agent',"I didn't understand that. Could you rephrase?");
+      if(stagedImage) addMsg('agent',"I didn't attach the image either — try \"add this image to <task>\".",'error');
+      busy=false; $('sendBtn').disabled=false; return;
+    }
+
+    const resolveUser=id=>{if(!id)return null;if(id.includes('@')||/^\d{10,}$/.test(id))return id;const u=workspaceUsers.find(u=>u.name.toLowerCase()===id.toLowerCase()||u.name.toLowerCase().includes(id.toLowerCase()));return u?u.gid:id;};
+    const userDisplay=id=>workspaceUsers.find(u=>u.gid===id||u.email===id)?.name||id;
+    const resolveTag=async ref=>{ if(!ref) return null; let tag=fuzzy(workspaceTags,ref); if(tag) return tag; const r=await asana('POST','/tags',{data:{name:ref,workspace:workspaceGid}}); if(r.errors) throw new Error(r.errors[0].message); tag={gid:r.data.gid,name:r.data.name}; workspaceTags.push(tag); return tag; };
+    for(const a of actions){ if(a.due) a.due=parseRelativeDate(a.due); }
+    const subFetch=new Map();
+    const fetchSubs=parentGid=>{ if(!subFetch.has(parentGid)) subFetch.set(parentGid, asana('GET',`/tasks/${parentGid}/subtasks?opt_fields=name,gid,completed&limit=100`).then(r=>{if(r.errors)throw new Error(r.errors[0].message); return r.data||[];})); return subFetch.get(parentGid); };
+    const resolveSubtask=async(parentGid,ref)=>{const subs=await fetchSubs(parentGid);let sub=fuzzy(subs,ref);if(!sub){const k=(ref||'').toLowerCase();const inc=subs.filter(s=>!s.completed);const done=subs.filter(s=>s.completed);if((k.includes('undone')||k.includes('incomplete')||k.includes('pending')||k.includes('open'))&&inc.length===1)sub=inc[0];else if((k.includes('done')||k.includes('complet')||k.includes('finish'))&&done.length===1)sub=done[0];else if(inc.length===1&&(k.includes('the')||k.includes('it')||k.includes('that')||k===''))sub=inc[0];}return sub;};
+    const mustResolveSubtask=async(parentGid,ref)=>{const s=await resolveSubtask(parentGid,ref);if(!s)results.push({ok:false,msg:`Sub-task "${ref}" not found`});return s;};
+    const results=[]; let didMutate=false;
+    for(const a of actions){
+      if(a.action==='unknown') continue;
+      if(a.action==='switch_project'){
+        const ref=a.project||a.name||a.task;
+        const p=fuzzy(allProjects,ref);
+        if(!p){results.push({ok:false,msg:`Project "${ref}" not found`});continue;}
+        if(p.gid===projectGid){results.push({ok:true,msg:`Already on <strong>${p.name}</strong>`});continue;}
+        const idx=allProjects.findIndex(x=>x.gid===p.gid);
+        try{ await switchProject(idx); results.push({ok:true,msg:`Switched to <strong>${p.name}</strong>`}); }
+        catch(e){ results.push({ok:false,msg:`Could not switch: ${e.message}`}); }
+        continue;
+      }
+      if(a.action==='undo'){
+        const inv=undoStack.pop();
+        if(!inv){results.push({ok:false,msg:'Nothing to undo.'});continue;}
+        try{ const m=await inv(); results.push({ok:true,msg:`Undid: ${m}`}); didMutate=true; }
+        catch(e){ results.push({ok:false,msg:`Undo failed: ${e.message}`}); }
+        continue;
+      }
+      if(a.action!=='create_task' && !a.task){
+        const k=(a.task||'').toLowerCase();
+        const couldBeUnnamed=k===''||k==='undefined'||k==='unnamed';
+        const hasAssignee=!!a.assignee;
+        if(!couldBeUnnamed&&!hasAssignee){results.push({ok:false,msg:'Could not identify which task you meant. Try being more specific.'});continue;}
+      }
+      if(a.action==='create_task'){
+        try{
+          const taskName=a.name||a.task;
+          const data={name:taskName,projects:[projectGid]};
+          if(a.assignee)data.assignee=a.assignee; if(a.due)data.due_on=a.due;
+          if(a.notes||a.description)data.notes=a.notes||a.description;
+          if(a.section){const s=fuzzy(sections,a.section);if(s)data.memberships=[{project:projectGid,section:s.gid}];}
+          const r=await asana('POST','/tasks',{data}); if(r.errors)throw new Error(r.errors[0].message);
+          results.push({ok:true,msg:`Created <strong>${taskName}</strong>${a.assignee?` → ${a.assignee}`:''}${a.due?` (due ${a.due})`:''}`}); didMutate=true;
+          recentContext=[{type:'task',name:taskName,gid:r.data?.gid||''}];
+          if(r.data?.gid){ tasks.push({name:taskName,gid:r.data.gid,assignee:null,due_on:a.due||null,memberships:[],_section:null}); undoStack.push(async()=>{await asana('DELETE',`/tasks/${r.data.gid}`); return `deleted <strong>${taskName}</strong>`;}); }
+        }catch(e){results.push({ok:false,msg:`Couldn't create: ${e.message}`});}
+        continue;
+      }
+      let task=fuzzy(tasks,a.task);
+      if(!task){
+        const k=(a.task||'').toLowerCase();
+        const unnamedKw=k.includes('unnamed')||k.includes('no name')||k.includes('without name')||k.includes('empty')||k===''||k==='undefined';
+        if(unnamedKw) task=tasks.find(t=>!t.name||t.name.trim()==='');
+        if(!task&&a.assignee){const aid=a.assignee.toLowerCase();task=tasks.find(t=>(!t.name||t.name.trim()==='')&&(t.assignee?.name?.toLowerCase().includes(aid)||t.assignee?.email?.toLowerCase().includes(aid)));}
+      }
+      if(!task){results.push({ok:false,msg:`Task "${a.task}" not found`});continue;}
+      try{
+        if(a.action==='move_to_section'){const s=fuzzy(sections,a.section);if(!s){results.push({ok:false,msg:`Section "${a.section}" not found`});continue;}const prevSec=task.memberships?.find(m=>m.project?.gid===projectGid)?.section;const r=await asana('POST',`/sections/${s.gid}/addTask`,{data:{task:task.gid}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Moved <strong>${task.name}</strong> → <strong>${s.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];if(prevSec?.gid) undoStack.push(async()=>{await asana('POST',`/sections/${prevSec.gid}/addTask`,{data:{task:task.gid}}); return `moved <strong>${task.name}</strong> back to <strong>${prevSec.name||'previous section'}</strong>`;});}
+        else if(a.action==='assign'||a.action==='assign_subtask'){
+          const assigneeId=resolveUser(a.assignee);const displayName=userDisplay(assigneeId);
+          if(a.action==='assign_subtask'){
+            const sub=await mustResolveSubtask(task.gid,a.subtask);
+            if(!sub)continue;
+            const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{assignee:assigneeId}});
+            if(r.errors)throw new Error(r.errors[0].message);
+            results.push({ok:true,msg:`Assigned sub-task <strong>${sub.name}</strong> to ${displayName}`});
+            recentContext=[{type:'subtask',name:sub.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];
+          }else{
+            const prevAssignee=task.assignee?.gid||null;
+            const r=await asana('PUT',`/tasks/${task.gid}`,{data:{assignee:assigneeId}});
+            if(r.errors)throw new Error(r.errors[0].message);
+            results.push({ok:true,msg:`Assigned <strong>${task.name}</strong> to ${displayName}`});
+            recentContext=[{type:'task',name:task.name,gid:task.gid}];
+            undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{assignee:prevAssignee}}); return prevAssignee?`reassigned <strong>${task.name}</strong> back`:`unassigned <strong>${task.name}</strong>`;});
+          }
+          didMutate=true;
+        }
+        else if(a.action==='delete_task'){const r=await asana('DELETE',`/tasks/${task.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted <strong>${task.name}</strong>`});didMutate=true;recentContext=[];}
+        else if(a.action==='comment'){const r=await asana('POST',`/tasks/${task.gid}/stories`,{data:{text:a.comment}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Commented on <strong>${task.name}</strong>: "${a.comment}"`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='complete'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{completed:true}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Marked <strong>${task.name}</strong> complete`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{completed:false}}); return `reopened <strong>${task.name}</strong>`;});}
+        else if(a.action==='uncomplete'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{completed:false}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Marked <strong>${task.name}</strong> incomplete`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{completed:true}}); return `marked <strong>${task.name}</strong> complete again`;});}
+        else if(a.action==='set_due_date'){const prevDue=task.due_on||null;const r=await asana('PUT',`/tasks/${task.gid}`,{data:{due_on:a.due}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Set due date of <strong>${task.name}</strong> to ${a.due}`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{due_on:prevDue}}); return prevDue?`restored due date of <strong>${task.name}</strong> to ${prevDue}`:`cleared due date of <strong>${task.name}</strong>`;});}
+        else if(a.action==='complete_subtask'||a.action==='uncomplete_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const done=a.action==='complete_subtask';const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{completed:done}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Sub-task <strong>${sub.name}</strong> marked ${done?'complete':'incomplete'}`});didMutate=true;recentContext=[{type:'subtask',name:sub.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
+        else if(a.action==='get_subtasks'||a.action==='get_all_subtasks'||a.action==='get_done_subtasks'){
+          const r=await asana('GET',`/tasks/${task.gid}/subtasks?opt_fields=name,gid,completed,assignee.name,due_on&limit=100`);if(r.errors)throw new Error(r.errors[0].message);
+          const all=r.data||[];
+          const vis=a.action==='get_all_subtasks'?all:a.action==='get_done_subtasks'?all.filter(s=>s.completed):all.filter(s=>!s.completed);
+          const lbl=a.action==='get_all_subtasks'?'all':a.action==='get_done_subtasks'?'completed':'incomplete';
+          if(!all.length)results.push({ok:true,readonly:true,msg:`<strong>${task.name}</strong> has no sub-tasks.`});
+          else if(!vis.length)results.push({ok:true,readonly:true,msg:`<strong>${task.name}</strong> has no ${lbl} sub-tasks.`});
+          else{const open=all.filter(s=>!s.completed).length;const list=vis.map(s=>`<div class="action-item">${s.completed?'✓':'○'} ${s.name}${s.assignee?` — ${s.assignee.name}`:''}${s.due_on?` (due ${s.due_on})`:''}</div>`).join('');results.push({ok:true,readonly:true,msg:`Sub-tasks of <strong>${task.name}</strong> (${lbl} — ${open} open / ${all.length} total):<div class="action-log" style="margin-top:6px">${list}</div>`});recentContext=vis.slice(0,10).map(s=>({type:'subtask',name:s.name,gid:s.gid,parent:task.name,parentGid:task.gid,completed:s.completed}));}
+        }
+        else if(a.action==='create_subtask'){
+          const stData={name:a.name};
+          if(a.assignee)stData.assignee=resolveUser(a.assignee);
+          if(a.due)stData.due_on=a.due;
+          if(a.notes)stData.notes=a.notes;
+          const r=await asana('POST',`/tasks/${task.gid}/subtasks`,{data:stData});
+          if(r.errors)throw new Error(r.errors[0].message);
+          results.push({ok:true,msg:`Created sub-task <strong>${a.name}</strong> under <strong>${task.name}</strong>`});
+          didMutate=true;recentContext=[{type:'subtask',name:a.name,gid:r.data?.gid||'',parent:task.name,parentGid:task.gid}];
+        }
+        else if(a.action==='rename_task'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{name:a.name}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Renamed to <strong>${a.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:a.name,gid:task.gid}];}
+        else if(a.action==='rename_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{name:a.name}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Renamed sub-task to <strong>${a.name}</strong>`});didMutate=true;recentContext=[{type:'subtask',name:a.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
+        else if(a.action==='set_description'){const notes=a.notes||a.description||'';const r=await asana('PUT',`/tasks/${task.gid}`,{data:{notes}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Updated description of <strong>${task.name}</strong>`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='delete_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('DELETE',`/tasks/${sub.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted sub-task <strong>${sub.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='unassign'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{assignee:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed assignee from <strong>${task.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='unassign_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{assignee:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed assignee from sub-task <strong>${sub.name}</strong>`});didMutate=true;recentContext=[{type:'subtask',name:sub.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
+        else if(a.action==='remove_due_date'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{due_on:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed due date from <strong>${task.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='set_due_date_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{due_on:a.due}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Set due date of <strong>${sub.name}</strong> to ${a.due}`});didMutate=true;recentContext=[{type:'subtask',name:sub.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
+        else if(a.action==='add_follower'){const fid=resolveUser(a.follower||a.assignee);if(!fid){results.push({ok:false,msg:`User not found`});continue;}const r=await asana('POST',`/tasks/${task.gid}/addFollowers`,{data:{followers:[fid]}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Added ${userDisplay(fid)} as follower of <strong>${task.name}</strong>`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='remove_follower'){const fid=resolveUser(a.follower||a.assignee);if(!fid){results.push({ok:false,msg:`User not found`});continue;}const r=await asana('POST',`/tasks/${task.gid}/removeFollowers`,{data:{followers:[fid]}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed ${userDisplay(fid)} from followers of <strong>${task.name}</strong>`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='get_task_details'){
+          const [tr,sr,cr]=await Promise.all([
+            asana('GET',`/tasks/${task.gid}?opt_fields=name,notes,assignee.name,due_on,completed,followers.name,tags.name,memberships.section.name`),
+            asana('GET',`/tasks/${task.gid}/subtasks?opt_fields=name,completed,assignee.name,due_on&limit=100`),
+            asana('GET',`/tasks/${task.gid}/stories?opt_fields=text,resource_subtype,created_by.name,created_at&limit=20`)
+          ]);
+          if(tr.errors)throw new Error(tr.errors[0].message);
+          const d=tr.data||{};const lines=[];
+          if(d.notes)lines.push(`<div><strong>Description:</strong> ${d.notes.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`);
+          else lines.push(`<div><strong>Description:</strong> <em>none</em></div>`);
+          if(d.assignee)lines.push(`<div><strong>Assignee:</strong> ${d.assignee.name}</div>`);
+          if(d.due_on)lines.push(`<div><strong>Due:</strong> ${d.due_on}</div>`);
+          if(d.memberships?.find(m=>m.section)?.section?.name)lines.push(`<div><strong>Section:</strong> ${d.memberships.find(m=>m.section).section.name}</div>`);
+          if(d.followers?.length)lines.push(`<div><strong>Followers:</strong> ${d.followers.map(f=>f.name).join(', ')}</div>`);
+          if(d.tags?.length)lines.push(`<div><strong>Tags:</strong> ${d.tags.map(t=>t.name).join(', ')}</div>`);
+          const subs=sr.data||[];
+          if(subs.length){
+            const open=subs.filter(s=>!s.completed).length;
+            const items=subs.map(s=>`<div class="action-item">${s.completed?'✓':'○'} ${s.name||'(unnamed)'}${s.assignee?` — ${s.assignee.name}`:''}${s.due_on?` (due ${s.due_on})`:''}</div>`).join('');
+            lines.push(`<div><strong>Sub-tasks (${open} open / ${subs.length} total):</strong><div class="action-log" style="margin-top:4px">${items}</div></div>`);
+          }
+          const comments=(cr.data||[]).filter(s=>s.resource_subtype==='comment');
+          if(comments.length){
+            const recent=comments.slice(-3);
+            const items=recent.map(c=>`<div class="action-item"><strong>${c.created_by?.name||'Unknown'}:</strong> ${c.text.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>`).join('');
+            lines.push(`<div><strong>Comments (${comments.length}${comments.length>3?', latest 3':''}):</strong><div class="action-log" style="margin-top:4px">${items}</div></div>`);
+          }
+          results.push({ok:true,readonly:true,msg:`<strong>${d.name||'(unnamed)'}</strong><div class="action-log" style="margin-top:6px">${lines.join('')||'No additional details.'}</div>`});
+          recentContext=[{type:'task',name:task.name,gid:task.gid}];
+        }
+        else if(a.action==='explain_task'){
+          const [tr,sr,cr]=await Promise.all([
+            asana('GET',`/tasks/${task.gid}?opt_fields=name,notes,assignee.name,due_on,completed,followers.name,tags.name,memberships.section.name`),
+            asana('GET',`/tasks/${task.gid}/subtasks?opt_fields=name,completed,assignee.name,due_on&limit=100`),
+            asana('GET',`/tasks/${task.gid}/stories?opt_fields=text,resource_subtype,created_by.name,created_at&limit=50`)
+          ]);
+          if(tr.errors)throw new Error(tr.errors[0].message);
+          const d=tr.data||{};
+          const subtasks=(sr.data||[]).map(s=>({name:s.name||'(unnamed)',done:!!s.completed,assignee:s.assignee?.name||null,due:s.due_on||null}));
+          const comments=(cr.data||[]).filter(s=>s.resource_subtype==='comment').slice(-10).map(s=>({author:s.created_by?.name||'Unknown',when:s.created_at,text:s.text}));
+          const ctx={
+            name:d.name||'(unnamed)',
+            description:d.notes||'',
+            assignee:d.assignee?.name||null,
+            due:d.due_on||null,
+            section:d.memberships?.find(m=>m.section)?.section?.name||null,
+            completed:!!d.completed,
+            followers:(d.followers||[]).map(f=>f.name),
+            tags:(d.tags||[]).map(t=>t.name),
+            subtasks,
+            comments
+          };
+          const explainSys=`You are explaining an Asana task to the user in plain, helpful language. Be concise — 3 to 6 sentences. Cover: WHAT must be done (from description and sub-tasks), WHO is responsible, and any DEADLINE. If comments add important context (decisions, blockers, clarifications, latest status), weave them in. If the description is empty, say so explicitly and infer the goal from sub-tasks and comments instead. Lead with a one-sentence summary of the task's purpose. Return plain HTML only (use <br>, <strong>, <em>) — no JSON, no markdown fences, no headings.`;
+          const bubble=addMsg('agent','<em>Reading task…</em>');
+          let streamed='';
+          try{
+            streamed=await callLLM([
+              {role:'system',content:explainSys},
+              {role:'user',content:`Task data (JSON):\n${JSON.stringify(ctx,null,2)}\n\nExplain this task to me in plain language.`}
+            ],(full)=>{bubble.innerHTML=full;const m=$('messages');m.scrollTop=m.scrollHeight;});
+            bubble.innerHTML=streamed||'<em>(no explanation produced)</em>';
+          }catch(e){
+            bubble.innerHTML=`<em>Couldn't generate explanation: ${e.message}</em>`;
+            bubble.classList.add('error');
+          }
+          recentContext=[{type:'task',name:task.name,gid:task.gid}];
+          chatHistory.push({role:'agent',content:stripHtml(streamed)});
+          results.push({ok:true,readonly:true,suppress:true,msg:`Explained <strong>${task.name}</strong>`});
+        }
+        else if(a.action==='add_tag'){const tag=await resolveTag(a.tag||a.name);if(!tag){results.push({ok:false,msg:'Tag not found'});continue;}const r=await asana('POST',`/tasks/${task.gid}/addTag`,{data:{tag:tag.gid}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Tagged <strong>${task.name}</strong> as <strong>${tag.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('POST',`/tasks/${task.gid}/removeTag`,{data:{tag:tag.gid}}); return `removed tag <strong>${tag.name}</strong> from <strong>${task.name}</strong>`;});}
+        else if(a.action==='remove_tag'){const tag=fuzzy(workspaceTags,a.tag||a.name);if(!tag){results.push({ok:false,msg:`Tag "${a.tag||a.name}" not found`});continue;}const r=await asana('POST',`/tasks/${task.gid}/removeTag`,{data:{tag:tag.gid}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed tag <strong>${tag.name}</strong> from <strong>${task.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('POST',`/tasks/${task.gid}/addTag`,{data:{tag:tag.gid}}); return `re-tagged <strong>${task.name}</strong> as <strong>${tag.name}</strong>`;});}
+      }catch(e){results.push({ok:false,msg:`${a.action} failed: ${e.message}`});}
+    }
+
+    if(stagedImage) {
+      const att=await attachStaged(stagedImage);
+      if(att) results.push(att);
+    }
+    if(didMutate) for(const gid of subFetch.keys()) delete subtaskCache[gid];
+    if(undoStack.length>20) undoStack=undoStack.slice(-20);
+    const allOk=results.every(r=>r.ok);
+    const visible=results.filter(r=>!r.suppress);
+    const log=visible.map(r=>`<div class="action-item">${r.ok?'✓':'✗'} ${r.msg}</div>`).join('');
+    if(visible.length){
+      const allReadonly=visible.every(r=>r.readonly);
+      const prefix = !allOk ? 'Finished with issues:'
+                   : allReadonly ? "Here's what I found:"
+                   : 'Done!';
+      const summary=`${prefix}<div class="action-log">${log}</div>`;
+      addMsg('agent',summary,allOk?'success':'error');
+    }
+
+    chatHistory.push({role:'user',content:text},{role:'agent',content:results.map(r=>stripHtml(r.msg)).join('; ')});
+    if(chatHistory.length>30) chatHistory.splice(0,chatHistory.length-30);
+
+    if(didMutate) fetchAndCacheTasks(false, true);
+  }catch(err){removeTyping();addMsg('agent','Something went wrong: '+err.message,'error');}
+  busy=false; $('sendBtn').disabled=false;
+}
+
+$('userInput').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';});
+$('userInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+</script>
+</body>
+</html>
