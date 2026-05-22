@@ -205,14 +205,15 @@
     .subtask-row .task-name { font-size: 12px; }
 
     /* Bulk toolbar */
-    #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 14px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-    #bulk-toolbar.visible { max-height: 52px; padding: 10px 14px; border-top-width: 1px; }
-    #bulk-count { font-size: 12px; font-weight: 600; color: var(--text-2); flex: 1; }
+    #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 8px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+    #bulk-toolbar.visible { max-height: 52px; padding: 10px 8px; border-top-width: 1px; }
+    #bulk-count { font-size: 12px; font-weight: 600; color: var(--text-2); flex: 1; min-width: 0; }
     .bulk-btn { padding: 5px 10px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: inherit; white-space: nowrap; transition: background .12s, color .12s; }
     .bulk-btn:hover { background: var(--surface-3); }
     .bulk-btn.primary { background: var(--green-bg); border-color: var(--green-border); color: var(--green); }
     .bulk-btn.primary:hover { background: var(--green-border); }
-    #bulk-section { font-size: 11.5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); font-family: inherit; outline: none; cursor: pointer; max-width: 110px; }
+    #bulk-section { font-size: 11.5px; padding: 5px 4px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); font-family: inherit; outline: none; cursor: pointer; max-width: 90px; flex-shrink: 1; min-width: 0; }
+    #bulk-clear { width: 28px; height: 28px; padding: 0; font-size: 14px; flex-shrink: 0; }
 
     /* Panel overlays (detail + quick-add) */
     .side-overlay { position: absolute; inset: 0; background: var(--surface-2); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .25s cubic-bezier(.4,0,.2,1); z-index: 10; }
@@ -380,7 +381,7 @@
         <select id="bulk-section" onchange="bulkMove(this.value)">
           <option value="">Move to…</option>
         </select>
-        <button class="bulk-btn" onclick="clearSelection()">✕ Clear</button>
+        <button class="bulk-btn" id="bulk-clear" onclick="clearSelection()" title="Clear selection">✕</button>
       </div>
 
       <!-- Task detail overlay -->
