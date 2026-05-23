@@ -427,6 +427,7 @@ let workspaceGid = '', workspaceUsers = [];
 let panelOpen = false, panelFilter = 'open', panelSearch = '', assigneeFilter = 'all';
 let selectMode = false, selectedTasks = new Set();
 let cachedTasks = [], cachedSections = [], allProjects = [], pickerOpen = false;
+let myTasksGids = new Set();
 let lastFetchedAt = 0; const CACHE_TTL_MS = 30000;
 let workspaceTags = []; let undoStack = [];
 let provider = 'groq', groqKey = '', openaiKey = '', anthropicKey = '', ollamaModel = 'qwen2.5:14b', darkMode = false;
@@ -917,8 +918,10 @@ async function submitQuickAdd() {
   const name=$('qa-name').value.trim(); if(!name) return;
   const btn=$('qa-submit'); btn.disabled=true; btn.textContent='Creating…';
   try {
-    const data={name,projects:[projectGid]};
-    const secGid=$('qa-section').value; if(secGid) data.memberships=[{project:projectGid,section:secGid}];
+    const data={name};
+    if(!myTasksGids.has(projectGid)) data.projects=[projectGid];
+    else data.workspace=workspaceGid;
+    const secGid=$('qa-section').value; if(secGid&&!myTasksGids.has(projectGid)) data.memberships=[{project:projectGid,section:secGid}];
     const assignee=$('qa-assignee').value.trim(); if(assignee) data.assignee=assignee;
     const due=$('qa-due').value; if(due) data.due_on=due;
     const r=await asana('POST','/tasks',{data});
@@ -1094,6 +1097,7 @@ async function connect() {
       if(mtR?.data?.gid) myTasksLists.push({gid:mtR.data.gid,name:ws.data.length>1?`📥 My Tasks · ${w.name}`:'📥 My Tasks'});
     });
     if(!projects.length && !myTasksLists.length) throw new Error('No projects found.');
+    myTasksGids = new Set(myTasksLists.map(m=>m.gid));
     allProjects=[...myTasksLists,...projects.sort((a,b)=>a.name.localeCompare(b.name))];
     const [me2, usersR, tagsR] = await Promise.all([
       asana('GET','/users/me?opt_fields=name,email,gid'),
@@ -1310,10 +1314,12 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
       if(a.action==='create_task'){
         try{
           const taskName=a.name||a.task;
-          const data={name:taskName,projects:[projectGid]};
+          const data={name:taskName};
+          if(!myTasksGids.has(projectGid)) data.projects=[projectGid];
+          else data.workspace=workspaceGid;
           if(a.assignee)data.assignee=a.assignee; if(a.due)data.due_on=a.due;
           if(a.notes||a.description)data.notes=a.notes||a.description;
-          if(a.section){const s=fuzzy(sections,a.section);if(s)data.memberships=[{project:projectGid,section:s.gid}];}
+          if(a.section&&!myTasksGids.has(projectGid)){const s=fuzzy(sections,a.section);if(s)data.memberships=[{project:projectGid,section:s.gid}];}
           const r=await asana('POST','/tasks',{data}); if(r.errors)throw new Error(r.errors[0].message);
           results.push({ok:true,msg:`Created <strong>${taskName}</strong>${a.assignee?` → ${a.assignee}`:''}${a.due?` (due ${a.due})`:''}`}); didMutate=true;
           recentContext=[{type:'task',name:taskName,gid:r.data?.gid||''}];
