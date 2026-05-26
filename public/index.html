@@ -149,6 +149,7 @@
     .panel-title { font-size: 12px; font-weight: 650; color: var(--text); }
     .panel-head-actions { display: flex; gap: 4px; }
     .panel-icon-btn { width: 24px; height: 24px; border-radius: 6px; border: none; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-3); transition: background .12s, color .12s; }
+    .panel-close-btn { display: none; }
     .panel-icon-btn:hover { background: var(--surface-3); color: var(--text-2); }
     .panel-icon-btn.active { background: var(--red); color: #fff; }
     .panel-icon-btn svg { width: 13px; height: 13px; }
@@ -310,6 +311,7 @@
         transform: translateX(0);
       }
       #panel-body { padding-bottom: env(safe-area-inset-bottom); }
+      .panel-close-btn { display: flex; }
     }
   </style>
 </head>
@@ -381,6 +383,9 @@
     <div id="task-panel">
       <div id="panel-head">
         <div class="panel-title-row">
+          <button class="panel-icon-btn panel-close-btn" onclick="togglePanel()" title="Close panel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
           <span class="panel-title">Project Tasks</span>
           <div class="panel-head-actions">
             <button class="panel-icon-btn" id="addTaskBtn" onclick="openQuickAdd()" title="Add task">
