@@ -1084,28 +1084,19 @@ async function connect() {
     if(ws.errors) throw new Error(ws.errors[0].message);
     if(!ws.data?.length) throw new Error('No workspaces found.');
     workspaceGid = ws.data[0].gid;
-    // Asana treats each workspace's "My Tasks" list like a project, so it can be selected like one.
-    const projAndMyTasks = await Promise.all(ws.data.flatMap(w => [
-      asana('GET',`/projects?workspace=${w.gid}&opt_fields=name,gid&limit=100&archived=false`),
-      asana('GET',`/users/me/user_task_list?workspace=${w.gid}&opt_fields=name,gid`).catch(()=>({data:null}))
-    ]));
-    const projects=[], myTasksLists=[];
-    ws.data.forEach((w,i)=>{
-      const projR=projAndMyTasks[i*2], mtR=projAndMyTasks[i*2+1];
-      if(projR.errors) throw new Error(projR.errors[0].message);
-      (projR.data||[]).forEach(p=>projects.push(p));
-      if(mtR?.data?.gid) myTasksLists.push({gid:mtR.data.gid,name:ws.data.length>1?`📥 My Tasks · ${w.name}`:'📥 My Tasks'});
-    });
-    if(!projects.length && !myTasksLists.length) throw new Error('No projects found.');
-    myTasksGids = new Set(myTasksLists.map(m=>m.gid));
-    allProjects=[...myTasksLists,...projects.sort((a,b)=>a.name.localeCompare(b.name))];
-    const [me2, usersR, tagsR] = await Promise.all([
+    const [meRes, projR, usersR, tagsR] = await Promise.all([
       asana('GET','/users/me?opt_fields=name,email,gid'),
+      asana('GET',`/projects?workspace=${workspaceGid}&opt_fields=name,gid,members.gid&limit=100&archived=false`),
       asana('GET',`/users?workspace=${workspaceGid}&opt_fields=name,gid,email&limit=100`),
       asana('GET',`/workspaces/${workspaceGid}/tags?opt_fields=name,gid&limit=100`)
     ]);
-    if(me2.errors) throw new Error(me2.errors[0].message);
-    me = me2.data;
+    if(meRes.errors) throw new Error(meRes.errors[0].message);
+    me = meRes.data;
+    if(projR.errors) throw new Error(projR.errors[0].message);
+    const projects = (projR.data||[]).filter(p => p.members?.some(m => m.gid === me.gid));
+    if(!projects.length) throw new Error('No projects found where you are a member.');
+    myTasksGids = new Set();
+    allProjects = projects.sort((a,b)=>a.name.localeCompare(b.name));
     workspaceUsers = (usersR.data||[]).filter(u=>u.email);
     workspaceTags = tagsR.data||[];
     const found=allProjects.find(p=>p.gid===savedProjectGid())||allProjects[0];
