@@ -278,6 +278,39 @@
     #chat-image-bar { padding: 0 18px 4px; }
     .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 9999; display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
     .lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+
+    /* ── Mobile ── */
+    @media (max-width: 640px) {
+      body { padding: 0; align-items: stretch; }
+      #app { border-radius: 0; border: none; box-shadow: none; height: 100dvh; max-height: none; }
+      #app.panel-open { max-width: 100%; }
+      #header { padding: 10px 14px; gap: 8px; }
+      #header-sub { display: none; }
+      #config { max-height: 400px; }
+      .config-row { flex-direction: column; align-items: stretch; }
+      .field { min-width: unset; }
+      .provider-wrap { width: 100%; }
+      .provider-tabs { width: 100%; }
+      #connectBtn { width: 100%; height: 42px; margin-top: 2px; }
+      #messages { padding: 16px 14px; }
+      .msg { max-width: 92%; }
+      #inputbar { padding: 10px 12px; padding-bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px)); }
+      #userInput { font-size: 16px; }
+      .field input, .field select, .qa-field input, .qa-field select { font-size: 16px; }
+      #sendBtn { width: 44px; height: 44px; }
+      #chatAttachBtn { width: 44px; height: 44px; }
+      #task-panel {
+        position: fixed; inset: 0; z-index: 300;
+        width: 100% !important; border-left: none !important;
+        transform: translateX(100%);
+        transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+      }
+      #task-panel.open {
+        width: 100% !important; border-left-width: 0 !important;
+        transform: translateX(0);
+      }
+      #panel-body { padding-bottom: env(safe-area-inset-bottom); }
+    }
   </style>
 </head>
 <body>
