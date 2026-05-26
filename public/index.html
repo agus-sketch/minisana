@@ -526,7 +526,41 @@ unknown
 - "the undone/incomplete/pending sub-task" → set "subtask"="undone" (code resolves by completion status)
 - standup/daily summary → use the ANSWER FORMAT (🔥 Priority / ⚠️ Risks / ✅ Suggested Actions), OR if the user asks for a strict standup, use sections: <strong>✅ Done</strong> <strong>🔄 In Progress</strong> <strong>⚠️ Overdue</strong> <strong>📅 Coming up</strong> (next 7 days). Skip empty sections.
 - RECENTLY SHOWN resolution: if type="task" → use its "name" as "task" field; if type="subtask" → use its "parent" as "task" and "name" as "subtask"; "both"/"all of them"/"those" → one action per item in RECENTLY SHOWN
-- If ambiguous → {"answer": "clarifying question"}`;
+- If ambiguous → {"answer": "clarifying question"}
+
+=== WORKLOAD ANALYSIS ===
+"who has the most"/"workload"/"team load"/"how busy is"/"how many tasks does X have" → {"answer": HTML list per person}
+Format: <strong>👥 Team Workload</strong><br>then one line per person sorted by open task count desc:
+• <strong>Name</strong> — N open tasks[, N overdue ⚠️][, N due this week 📅]<br>
+Highlight anyone with 2+ overdue as a risk. Use INCOMPLETE TASKS from STATE grouped by assignee.name.
+"[person]'s tasks"/"what does [person] have"/"show [person]'s work" → {"answer": that person's incomplete tasks grouped by section, with due dates}
+
+=== BATCH OPERATIONS ===
+"complete all [in section/by person]" → {"action":"batch_complete","section":"...","assignee":"..."} — omit filters you don't need
+"move all [in section/by person] to [section]" → {"action":"batch_move","section":"...","assignee":"...","to_section":"..."}
+"assign all [in section] to [person]" → {"action":"batch_assign","section":"...","assignee":"email"}
+Filters are optional and combinable: section alone, assignee alone, or both together.
+"all my tasks" / "my tasks in [section]" → use assignee="me"
+
+=== DUE DATE INTELLIGENCE ===
+"what's due"/"deadlines"/"overdue"/"due this week"/"due today" → {"answer": tasks grouped by urgency}
+Format:
+🔴 <strong>Overdue</strong> — tasks past their due_on date
+🟡 <strong>Due today / tomorrow</strong>
+🟠 <strong>Due this week</strong> (within 7 days of Today from STATE)
+Each item: • Task name — Assignee — due DATE
+Skip empty groups. If asking about a specific person add their name to the header.
+"no due date"/"missing deadlines"/"tasks without due date" → list incomplete tasks where due is null, grouped by section.
+
+=== STANDUP RULES ===
+"standup"/"daily update"/"what did we do" → project-wide standup using this format:
+<strong>✅ Done</strong> — completed tasks (use COMPLETED TASKS from STATE if includeDone flag; otherwise note "run again with done context")
+<strong>🔄 In Progress</strong> — tasks in sections named "Doing"/"In Progress"/"WIP"
+<strong>⚠️ Overdue</strong> — incomplete tasks past due date, show assignee
+<strong>📅 Up next</strong> — due within 7 days, not yet overdue
+Skip empty sections. Keep each item to one line.
+"standup for [person]"/"[person]'s standup" → same format but filtered to that person's tasks only, header: <strong>👤 [Name]'s Standup</strong>
+"team standup" → one standup block per team member who has tasks, separated by <br>`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function stripHtml(h) { return h.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,400); }
@@ -1308,6 +1342,32 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
         if(!inv){results.push({ok:false,msg:'Nothing to undo.'});continue;}
         try{ const m=await inv(); results.push({ok:true,msg:`Undid: ${m}`}); didMutate=true; }
         catch(e){ results.push({ok:false,msg:`Undo failed: ${e.message}`}); }
+        continue;
+      }
+      if(a.action==='batch_complete'||a.action==='batch_move'||a.action==='batch_assign'){
+        try{
+          const isSelf=v=>['me','my','i','myself'].includes((v||'').toLowerCase());
+          let targets=tasks.filter(t=>!t.completed);
+          if(a.section){const s=fuzzy(sections,a.section);if(s)targets=targets.filter(t=>t._section===s.name);}
+          if(a.assignee){const name=isSelf(a.assignee)?me?.name:a.assignee;targets=targets.filter(t=>t.assignee?.name?.toLowerCase().includes(name.toLowerCase()));}
+          if(!targets.length){results.push({ok:false,msg:'No matching tasks found.'});continue;}
+          if(a.action==='batch_complete'){
+            let done=0;
+            for(const t of targets){const r=await asana('PUT',`/tasks/${t.gid}`,{data:{completed:true}});if(!r.errors){t.completed=true;done++;}}
+            results.push({ok:true,msg:`Completed <strong>${done}</strong> task${done!==1?'s':''}`}); didMutate=true;
+          } else if(a.action==='batch_move'){
+            const toSec=fuzzy(sections,a.to_section);
+            if(!toSec){results.push({ok:false,msg:`Section "${a.to_section}" not found`});continue;}
+            let moved=0;
+            for(const t of targets){const r=await asana('POST',`/sections/${toSec.gid}/addTask`,{data:{task:t.gid}});if(!r.errors){t._section=toSec.name;moved++;}}
+            results.push({ok:true,msg:`Moved <strong>${moved}</strong> task${moved!==1?'s':''} → <strong>${toSec.name}</strong>`}); didMutate=true;
+          } else if(a.action==='batch_assign'){
+            const aid=resolveUser(a.assignee); const dname=userDisplay(aid);
+            let assigned=0;
+            for(const t of targets){const r=await asana('PUT',`/tasks/${t.gid}`,{data:{assignee:aid}});if(!r.errors)assigned++;}
+            results.push({ok:true,msg:`Assigned <strong>${assigned}</strong> task${assigned!==1?'s':''} to <strong>${dname}</strong>`}); didMutate=true;
+          }
+        }catch(e){results.push({ok:false,msg:`Batch operation failed: ${e.message}`});}
         continue;
       }
       if(a.action!=='create_task' && !a.task){
