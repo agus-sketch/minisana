@@ -659,7 +659,7 @@ document.addEventListener('click', e => { if(pickerOpen&&!e.target.closest('.pro
 
 // ── Panel core ────────────────────────────────────────────────────────────
 function togglePanel() { panelOpen=!panelOpen; $('app').classList.toggle('panel-open',panelOpen); $('task-panel').classList.toggle('open',panelOpen); $('panelBtn').classList.toggle('open',panelOpen); if(panelOpen&&cachedTasks.length) renderPanel(); }
-function setPanelFilter(f,btn) { panelFilter=f; document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); btn.classList.add('active'); renderPanel(); }
+function setPanelFilter(f,btn) { panelFilter=f; document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); btn.classList.add('active'); renderAssigneeChips(); renderPanel(); }
 function onPanelSearch(v) { panelSearch=v.trim().toLowerCase(); $('searchClear').classList.toggle('visible',!!panelSearch); renderPanel(); }
 function clearPanelSearch() { $('panelSearch').value=''; onPanelSearch(''); $('panelSearch').focus(); }
 
@@ -676,7 +676,15 @@ async function fetchAndCacheTasks(checkOD=false, force=false) {
     if (tr.errors||sr.errors) return;
     cachedSections = sr.data||[];
     const secById = Object.fromEntries(cachedSections.map(s=>[s.gid,s.name]));
-    cachedTasks = (tr.data||[]).map(t => {
+    let allData = tr.data||[];
+    let nextPage = tr.next_page;
+    while (nextPage?.path) {
+      const page = await asana('GET', nextPage.path);
+      if (page.errors) break;
+      allData.push(...(page.data||[]));
+      nextPage = page.next_page;
+    }
+    cachedTasks = allData.map(t => {
       const m = t.memberships?.find(m => m.project?.gid === projectGid) || t.memberships?.[0];
       t._section = m?.section?.name || (m?.section?.gid && secById[m.section.gid]) || null;
       return t;
@@ -699,12 +707,18 @@ function checkOverdue() {
 
 // ── Assignee chips ────────────────────────────────────────────────────────
 function renderAssigneeChips() {
-  const names = [...new Set(cachedTasks.filter(t=>t.assignee).map(t=>t.assignee.name))].sort();
+  let pool = [...cachedTasks];
+  if (panelFilter === 'open') pool = pool.filter(t => !t.completed);
+  if (panelFilter === 'done') pool = pool.filter(t =>  t.completed);
+  const countBy = {};
+  pool.forEach(t => { const n = t.assignee?.name; if (n) countBy[n] = (countBy[n]||0) + 1; });
+  const names = Object.keys(countBy).sort();
   const wrap = $('assignee-chips');
   if (!names.length) { wrap.innerHTML=''; return; }
+  const total = pool.length;
   wrap.innerHTML = ['all',...names].map(n =>
     `<span class="a-chip ${assigneeFilter===n?'active':''}" onclick="setAssigneeFilter('${n.replace(/'/g,"\\'")}')">
-      ${n==='all'?'All':n.split(' ')[0]}
+      ${n==='all'?`All <span style="opacity:.55;font-size:9.5px">${total}</span>`:`${n.split(' ')[0]} <span style="opacity:.55;font-size:9.5px">${countBy[n]}</span>`}
     </span>`
   ).join('');
 }
