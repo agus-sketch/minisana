@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- Background -->
-  <rect width="512" height="512" rx="115" fill="#1f3a5f"/>
+  <rect width="512" height="512" rx="115" fill="#f06a6a"/>
 
   <!-- Antenna -->
   <rect x="244" y="60" width="24" height="56" rx="12" fill="white" opacity="0.9"/>
@@ -10,14 +10,14 @@
   <rect x="112" y="148" width="288" height="228" rx="48" fill="white" opacity="0.95"/>
 
   <!-- Eyes -->
-  <circle cx="180" cy="234" r="32" fill="#1f3a5f"/>
-  <circle cx="332" cy="234" r="32" fill="#1f3a5f"/>
+  <circle cx="180" cy="234" r="32" fill="#c0392b"/>
+  <circle cx="332" cy="234" r="32" fill="#c0392b"/>
   <circle cx="190" cy="224" r="10" fill="white"/>
   <circle cx="342" cy="224" r="10" fill="white"/>
 
   <!-- Mouth / speaker grid -->
-  <rect x="176" y="298" width="160" height="14" rx="7" fill="#1f3a5f" opacity="0.7"/>
-  <rect x="196" y="322" width="120" height="14" rx="7" fill="#1f3a5f" opacity="0.5"/>
+  <rect x="176" y="298" width="160" height="14" rx="7" fill="#c0392b" opacity="0.7"/>
+  <rect x="196" y="322" width="120" height="14" rx="7" fill="#c0392b" opacity="0.5"/>
 
   <!-- Ear bolts -->
   <circle cx="112" cy="262" r="18" fill="white" opacity="0.9"/>
