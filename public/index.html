@@ -47,8 +47,7 @@
 
     /* Header */
     #header { padding: 14px 18px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
-    .logo { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(145deg,#f47a7a,#d94f4f); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 2px 8px rgba(220,80,80,.3); }
-    .logo svg { width: 17px; height: 17px; fill: #fff; }
+    .logo { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; }
     .header-info { display: flex; flex-direction: column; gap: 1px; }
     #header-title { font-size: 14px; font-weight: 650; color: var(--text); letter-spacing: -.01em; }
     #header-sub { font-size: 11px; color: var(--text-3); }
@@ -318,7 +317,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="17" r="3"/><circle cx="19" cy="17" r="3"/></svg></div>
+    <img class="logo" src="/icons/icon.svg" alt="Minisana">
     <div class="header-info">
       <span id="header-title">Minisana</span>
       <span id="header-sub">AI-powered task assistant</span>
