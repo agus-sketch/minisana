@@ -351,6 +351,7 @@
         <div class="field"><label>Asana Token</label><input type="password" id="asanaToken" placeholder="Personal access token" /></div>
         <div class="field" id="llm-key-field"><label id="llm-key-label">Groq API Key</label><input type="password" id="llmKey" placeholder="Groq API key" /></div>
         <div class="field" id="ollama-model-field" style="display:none"><label>Ollama Model</label><select id="ollamaModelSelect" onchange="ollamaModel=this.value; warmCurrentModel();"></select></div>
+        <div class="field" id="anthropic-model-field" style="display:none"><label>Model</label><select id="anthropicModelSelect" onchange="anthropicModel=this.value;saveCreds()"><option value="claude-haiku-4-5-20251001">Haiku 4.5 — fast</option><option value="claude-sonnet-4-6">Sonnet 4.6 — smarter</option></select></div>
         <div class="provider-wrap">
           <label>Provider</label>
           <div class="provider-tabs">
@@ -470,7 +471,7 @@ let cachedTasks = [], cachedSections = [], allProjects = [], pickerOpen = false;
 let myTasksGids = new Set();
 let lastFetchedAt = 0; const CACHE_TTL_MS = 30000;
 let workspaceTags = []; let undoStack = [];
-let provider = 'groq', groqKey = '', openaiKey = '', anthropicKey = '', ollamaModel = 'qwen2.5:14b', darkMode = false;
+let provider = 'groq', groqKey = '', openaiKey = '', anthropicKey = '', ollamaModel = 'qwen2.5:14b', anthropicModel = 'claude-haiku-4-5-20251001', darkMode = false;
 let chatHistory = [];
 let recentContext = []; // last tasks/subtasks shown — resolves "it","that","both","those"
 let expandedTasks = new Set(), subtaskCache = {};
@@ -632,20 +633,22 @@ function parseRelativeDate(s) {
 // ── Persistence ───────────────────────────────────────────────────────────
 function saveCreds() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ asanaToken: $('asanaToken').value.trim(), projectGid, projectName }));
-  localStorage.setItem(KEYS_KEY, JSON.stringify({ groq: groqKey, openai: openaiKey, anthropic: anthropicKey, ollama: ollamaModel }));
+  localStorage.setItem(KEYS_KEY, JSON.stringify({ groq: groqKey, openai: openaiKey, anthropic: anthropicKey, ollama: ollamaModel, anthropicModel }));
 }
 function loadCreds() {
   try {
     const c = JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
     const k = JSON.parse(localStorage.getItem(KEYS_KEY)||'{}');
     if (c.asanaToken) $('asanaToken').value = c.asanaToken;
-    groqKey = k.groq||''; openaiKey = k.openai||''; anthropicKey = k.anthropic||''; ollamaModel = k.ollama||'qwen2.5:14b';
+    groqKey = k.groq||''; openaiKey = k.openai||''; anthropicKey = k.anthropic||''; ollamaModel = k.ollama||'qwen2.5:14b'; anthropicModel = k.anthropicModel||'claude-haiku-4-5-20251001';
     $('llmKey').value = provider==='openai' ? openaiKey : provider==='anthropic' ? anthropicKey : provider==='ollama' ? ollamaModel : groqKey;
+    if ($('anthropicModelSelect')) $('anthropicModelSelect').value = anthropicModel;
     return !!(c.asanaToken && (groqKey||openaiKey||anthropicKey||provider==='ollama'));
   } catch { return false; }
 }
 function savedProjectGid() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}').projectGid||''; } catch { return ''; } }
 function activeLLMKey() { return provider==='openai' ? openaiKey : provider==='anthropic' ? anthropicKey : provider==='ollama' ? '' : groqKey; }
+function activeLLMModel() { return provider==='ollama' ? ollamaModel||'qwen2.5:14b' : provider==='anthropic' ? anthropicModel : undefined; }
 
 // ── Dark mode ─────────────────────────────────────────────────────────────
 function applyTheme() {
@@ -665,8 +668,11 @@ async function setProvider(p) {
   provider = p; localStorage.setItem(PROV_KEY, p);
   document.querySelectorAll('.pvtab').forEach((b,i) => b.classList.toggle('active',(i===0&&p==='groq')||(i===1&&p==='openai')||(i===2&&p==='ollama')||(i===3&&p==='anthropic')));
   const isOllama = p==='ollama';
-  $('llm-key-field').style.display    = isOllama ? 'none' : '';
-  $('ollama-model-field').style.display = isOllama ? '' : 'none';
+  const isAnthropic = p==='anthropic';
+  $('llm-key-field').style.display         = isOllama ? 'none' : '';
+  $('ollama-model-field').style.display    = isOllama ? '' : 'none';
+  $('anthropic-model-field').style.display = isAnthropic ? '' : 'none';
+  if (isAnthropic && $('anthropicModelSelect')) $('anthropicModelSelect').value = anthropicModel;
   if (!isOllama) {
     const labels = { openai: 'OpenAI API Key', anthropic: 'Claude API Key', groq: 'Groq API Key' };
     const phs    = { openai: 'sk-...',         anthropic: 'sk-ant-...',     groq: 'Groq API key' };
@@ -1103,6 +1109,7 @@ async function callLLM(messages, onPartial) {
   const wantsStream = typeof onPartial === 'function';
   const body={messages,llmKey:key,provider,stream:wantsStream};
   if(provider==='ollama') body.model=ollamaModel||'qwen2.5:14b';
+  else if(provider==='anthropic') body.model=anthropicModel;
   const r=await fetch('/llm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 
   if (!wantsStream) {
@@ -1392,19 +1399,19 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
           if(a.assignee){const name=isSelf(a.assignee)?me?.name:a.assignee;targets=targets.filter(t=>t.assignee?.name?.toLowerCase().includes(name.toLowerCase()));}
           if(!targets.length){results.push({ok:false,msg:'No matching tasks found.'});continue;}
           if(a.action==='batch_complete'){
-            let done=0;
-            for(const t of targets){const r=await asana('PUT',`/tasks/${t.gid}`,{data:{completed:true}});if(!r.errors){t.completed=true;done++;}}
+            const bRes=await Promise.allSettled(targets.map(t=>asana('PUT',`/tasks/${t.gid}`,{data:{completed:true}})));
+            let done=0; bRes.forEach((r,i)=>{if(r.status==='fulfilled'&&!r.value?.errors){targets[i].completed=true;done++;}});
             results.push({ok:true,msg:`Completed <strong>${done}</strong> task${done!==1?'s':''}`}); didMutate=true;
           } else if(a.action==='batch_move'){
             const toSec=fuzzy(sections,a.to_section);
             if(!toSec){results.push({ok:false,msg:`Section "${a.to_section}" not found`});continue;}
-            let moved=0;
-            for(const t of targets){const r=await asana('POST',`/sections/${toSec.gid}/addTask`,{data:{task:t.gid}});if(!r.errors){t._section=toSec.name;moved++;}}
+            const bRes=await Promise.allSettled(targets.map(t=>asana('POST',`/sections/${toSec.gid}/addTask`,{data:{task:t.gid}})));
+            let moved=0; bRes.forEach((r,i)=>{if(r.status==='fulfilled'&&!r.value?.errors){targets[i]._section=toSec.name;moved++;}});
             results.push({ok:true,msg:`Moved <strong>${moved}</strong> task${moved!==1?'s':''} → <strong>${toSec.name}</strong>`}); didMutate=true;
           } else if(a.action==='batch_assign'){
             const aid=resolveUser(a.assignee); const dname=userDisplay(aid);
-            let assigned=0;
-            for(const t of targets){const r=await asana('PUT',`/tasks/${t.gid}`,{data:{assignee:aid}});if(!r.errors)assigned++;}
+            const bRes=await Promise.allSettled(targets.map(t=>asana('PUT',`/tasks/${t.gid}`,{data:{assignee:aid}})));
+            const assigned=bRes.filter(r=>r.status==='fulfilled'&&!r.value?.errors).length;
             results.push({ok:true,msg:`Assigned <strong>${assigned}</strong> task${assigned!==1?'s':''} to <strong>${dname}</strong>`}); didMutate=true;
           }
         }catch(e){results.push({ok:false,msg:`Batch operation failed: ${e.message}`});}

@@ -67,7 +67,7 @@ const LLM_MODELS = {
   groq:      "llama-3.3-70b-versatile",
   openai:    "gpt-4o-mini",
   ollama:    "qwen2.5:14b",
-  anthropic: "claude-haiku-4-5",
+  anthropic: "claude-haiku-4-5-20251001",
 };
 
 // ── Runtime config exposed to the UI ─────────────────────────────────────────
@@ -193,10 +193,11 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
     .map(m => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
     .join("\n\n");
   const conv = msgs.filter(m => m.role !== "system");
+  const convWithPrefill = [...conv, { role: "assistant", content: "{" }];
 
   const payload = {
     model,
-    messages: conv,
+    messages: convWithPrefill,
     temperature: 0.2,
     max_tokens: 600,
     stream: !!stream,
@@ -228,6 +229,7 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "{" }, index: 0 }] })}\n\n`);
       let buf = "";
       try {
         for await (const chunk of r.body) {
@@ -255,7 +257,7 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
 
     clearTimeout(timer);
     const data = await r.json();
-    const text = (data.content || []).map(b => b.text || "").join("");
+    const text = "{" + (data.content || []).map(b => b.text || "").join("");
     res.json({ choices: [{ message: { role: "assistant", content: text } }] });
   } catch (e) {
     clearTimeout(timer);
