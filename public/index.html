@@ -207,7 +207,7 @@
     /* Bulk toolbar */
     #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 8px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
     #bulk-toolbar.visible { max-height: 52px; padding: 10px 8px; border-top-width: 1px; }
-    #bulk-count { font-size: 12px; font-weight: 600; color: var(--text-2); flex: 1; min-width: 0; }
+    #bulk-count { font-size: 12px; font-weight: 700; color: var(--text); flex: 1; min-width: 0; }
     .bulk-btn { padding: 5px 10px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: inherit; white-space: nowrap; transition: background .12s, color .12s; }
     .bulk-btn:hover { background: var(--surface-3); }
     .bulk-btn.primary { background: var(--green-bg); border-color: var(--green-border); color: var(--green); }
@@ -371,7 +371,16 @@
       <div id="messages">
         <div class="msg agent">
           <div class="bubble" id="welcome-bubble">Hi, I'm Minisana! Enter your Asana token and API key above to get started.</div>
-          <div class="chips"><span class="chip" onclick="askCapabilities(this)">What can I ask you?</span></div>
+          <div class="chips">
+            <span class="chip" onclick="askCapabilities(this)">What can I ask you?</span>
+          </div>
+          <div class="chips" id="onboarding-chips">
+            <span class="chip" style="pointer-events:none;opacity:.55">After connecting:</span>
+            <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">What tasks do I have?</span>
+            <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">Generate my daily standup</span>
+            <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">What's overdue?</span>
+            <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">Who has the most tasks?</span>
+          </div>
         </div>
       </div>
       <div id="chat-image-bar" style="display:none"></div>
@@ -605,6 +614,7 @@ Skip empty sections. Keep each item to one line.
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function stripHtml(h) { return h.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,400); }
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function avatarColor(n) { const p=['#f06a6a','#6a9ef0','#6af09e','#f0c36a','#c36af0','#6af0e9','#f09e6a','#9ef06a']; let h=0; for(const c of(n||'?'))h=(h*31+c.charCodeAt(0))&0xffff; return p[h%p.length]; }
 function initials(n) { if(!n)return'?'; const p=n.trim().split(/\s+/); return(p.length>=2?p[0][0]+p[1][0]:n.slice(0,2)).toUpperCase(); }
 function isOverdue(d) { return d&&new Date(d+'T00:00:00')<new Date(new Date().toDateString()); }
@@ -719,10 +729,20 @@ function toggleConfig() { $('config').classList.toggle('collapsed'); $('settings
 
 // ── Project picker ────────────────────────────────────────────────────────
 function toggleProjectPicker() { pickerOpen=!pickerOpen; $('project-dropdown').classList.toggle('open',pickerOpen); $('projectPickerBtn').classList.toggle('open',pickerOpen); }
-function renderProjectPicker() {
-  $('project-dropdown').innerHTML = allProjects.map((p,i) =>
-    `<div class="proj-item ${p.gid===projectGid?'active':''}" onclick="switchProject(${i})"><span class="proj-check">${p.gid===projectGid?'✓':''}</span><span>${p.name}</span></div>`
-  ).join('');
+function renderProjectPicker(filter = '') {
+  const filtered = filter
+    ? allProjects.filter(p => p.name.toLowerCase().includes(filter.toLowerCase()))
+    : allProjects;
+  $('project-dropdown').innerHTML =
+    `<div style="padding:6px 8px 4px"><input id="proj-search" placeholder="Search projects…" value="${escHtml(filter)}" oninput="renderProjectPicker(this.value)" style="width:100%;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none;font-family:inherit" /></div>` +
+    (filtered.length
+      ? filtered.map((p,i) => {
+          const idx = allProjects.indexOf(p);
+          return `<div class="proj-item ${p.gid===projectGid?'active':''}" onclick="switchProject(${idx})"><span class="proj-check">${p.gid===projectGid?'✓':''}</span><span>${escHtml(p.name)}</span></div>`;
+        }).join('')
+      : `<div style="padding:8px 12px;font-size:12px;color:var(--text-3)">No projects found.</div>`
+    );
+  setTimeout(() => { const inp = $('proj-search'); if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); } }, 10);
 }
 async function switchProject(idx) {
   const p = allProjects[idx];
@@ -809,7 +829,7 @@ function toggleSelectMode() { selectMode=!selectMode; if(!selectMode){selectedTa
 function updateSelectMode() {
   $('selectBtn').classList.toggle('active',selectMode);
   $('bulk-toolbar').classList.toggle('visible',selectMode&&selectedTasks.size>0);
-  $('bulk-count').textContent=selectedTasks.size+' selected';
+  $('bulk-count').textContent = selectedTasks.size === 0 ? 'Select tasks' : `${selectedTasks.size} task${selectedTasks.size !== 1 ? 's' : ''} selected`;
 }
 function toggleTaskSelect(gid) {
   if(selectedTasks.has(gid)) selectedTasks.delete(gid); else selectedTasks.add(gid);
@@ -1070,6 +1090,19 @@ function askCapabilities(btn) {
   },600);
 }
 
+function copyStandup(btn) {
+  const msgEl = btn.closest('.msg');
+  const bubble = msgEl?.querySelector('.bubble');
+  if (!bubble) return;
+  const text = bubble.innerText || bubble.textContent || '';
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy as text'; }, 2000);
+  }).catch(() => {
+    btn.textContent = 'Copy failed';
+  });
+}
+
 // ── API ───────────────────────────────────────────────────────────────────
 async function asana(method,endpoint,body) { const r=await fetch('/asana',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,endpoint,body,token:asanaToken})}); return r.json(); }
 async function uploadAttachment(taskGid, file) {
@@ -1205,12 +1238,21 @@ async function connect() {
     addMsg('agent','What can I do for you?');
     btn.textContent='Connected ✓'; setTimeout(()=>{btn.textContent='Connect';btn.disabled=false;},2500);
     await fetchAndCacheTasks(true);
+    startBackgroundPoll();
   } catch(e) {
     $('status-pill').textContent='Error'; $('status-pill').className='error';
     addMsg('agent','Could not connect: '+e.message,'error');
     btn.textContent='Connect'; btn.disabled=false; asanaToken='';
   }
 }
+let _pollInterval = null;
+function startBackgroundPoll() {
+  if (_pollInterval) clearInterval(_pollInterval);
+  _pollInterval = setInterval(() => {
+    if (asanaToken && projectGid && !busy) fetchAndCacheTasks(false, false);
+  }, 60000);
+}
+
 if(loadCreds()) { $('welcome-bubble').textContent = "Hi, I'm Minisana! Reconnecting…"; connect(); }
 
 // ── Chat image staging ───────────────────────────────────────────────────
@@ -1349,6 +1391,15 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
         ?cachedTasks.filter(t=>!t.name||t.name.trim()===''):[];
       const allMentioned=[...mentioned,...unnamedMentioned.filter(t=>!mentioned.includes(t))];
       if(allMentioned.length) recentContext=allMentioned.slice(0,10).map(t=>({type:'task',name:t.name||'',gid:t.gid}));
+      // Standup copy button
+      const lowerMsg = text.toLowerCase();
+      if (/standup|daily|summary|update|recap|what.*(did|done)/i.test(lowerMsg) || /✅|🔄|⚠️|📅/.test(parsed.answer)) {
+        const copyChips = document.createElement('div');
+        copyChips.className = 'chips';
+        copyChips.innerHTML = `<span class="chip" onclick="copyStandup(this)">📋 Copy as text</span>`;
+        const msgEl = liveBubble ? liveBubble.closest('.msg') : $('messages').lastElementChild;
+        if (msgEl) msgEl.appendChild(copyChips);
+      }
       if(stagedImage) addMsg('agent',"I didn't attach the image — your message looked like a question. Try again with something like \"add this image to <task>\".",'error');
       busy=false; $('sendBtn').disabled=false; return;
     }
@@ -1605,6 +1656,20 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
 
 $('userInput').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';});
 $('userInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    $('userInput').focus();
+    $('userInput').select();
+  }
+  if (e.key === 'Escape') {
+    const detail = $('task-detail');
+    const quickAdd = $('quick-add-panel');
+    if (detail?.classList.contains('open')) { closeTaskDetail(); return; }
+    if (quickAdd?.classList.contains('open')) { closeQuickAdd(); return; }
+  }
+});
 
 // ── PWA install ───────────────────────────────────────────────────────────
 let _installPrompt = null;
