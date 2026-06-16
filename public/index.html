@@ -312,6 +312,20 @@
       #panel-body { padding-bottom: env(safe-area-inset-bottom); }
       .panel-close-btn { display: flex; }
     }
+  /* Assign-to modal */
+  .chat-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .18s; }
+  .chat-modal-backdrop.open { opacity: 1; pointer-events: all; }
+  .chat-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); width: 300px; max-width: calc(100vw - 32px); box-shadow: 0 8px 32px rgba(0,0,0,.22); overflow: hidden; }
+  .chat-modal-head { padding: 11px 14px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; gap: 8px; }
+  .chat-modal-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+  .chat-modal-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  #at-task { width: 100%; min-height: 96px; height: auto; margin-top: 4px; font-size: 12.5px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text); outline: none; font-family: inherit; padding: 4px; transition: border-color .15s, box-shadow .15s; }
+  #at-task:focus { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+  #at-task option { padding: 4px 6px; border-radius: 3px; }
+  #at-task option:checked { background: var(--red); color: #fff; }
+  #at-submit-assign { padding: 10px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-s); background: var(--red); color: #fff; cursor: pointer; font-family: inherit; margin-top: 2px; transition: background .15s, opacity .15s; box-shadow: 0 1px 4px rgba(220,80,80,.25); }
+  #at-submit-assign:hover { background: var(--red-hover); }
+  #at-submit-assign:disabled { opacity: .5; cursor: default; }
   </style>
 </head>
 <body>
@@ -1240,10 +1254,10 @@ async function connect() {
     addMsg('agent',`Connected as <strong>${me.name}</strong> → <strong>${found.name}</strong>`,'success');
     addMsg('agent','What can I do for you?'
       + '<div class="chips">'
-      + '<span class="chip" onclick="$(\'userInput\').value=\'Assign task to \';$(\'userInput\').focus()">Assign to…</span>'
+      + '<span class="chip" onclick="openAssignModal()">Assign to…</span>'
       + '<span class="chip" onclick="$(\'userInput\').value=\'List my open tasks grouped by project\';send()">List tasks</span>'
       + '<span class="chip" onclick="$(\'userInput\').value=\'What tasks are due today?\';send()">Due today</span>'
-      + '<span class="chip" onclick="$(\'userInput\').value=\'Create a task: \';$(\'userInput\').focus()">Create task…</span>'
+      + '<span class="chip" onclick="openCreateTask()">Create task…</span>'
       + '</div>');
     btn.textContent='Connected ✓'; setTimeout(()=>{btn.textContent='Connect';btn.disabled=false;},2500);
     await fetchAndCacheTasks(true);
@@ -1703,9 +1717,83 @@ function installApp() {
   }
 }
 
+// ── Assign-to modal ──────────────────────────────────────────────────────
+function openAssignModal() {
+  if (!asanaToken) { addMsg('agent','Please connect first.','error'); return; }
+  const tasks = cachedTasks.filter(t => !t.completed);
+  $('at-task').innerHTML = tasks.length
+    ? tasks.map(t => `<option value="${t.gid}">${escHtml(t.name)}</option>`).join('')
+    : '<option value="" disabled>No open tasks</option>';
+  $('at-user').innerHTML = workspaceUsers.length
+    ? workspaceUsers.map(u => `<option value="${u.gid}">${escHtml(u.name)}</option>`).join('')
+    : '<option value="" disabled>No users found</option>';
+  $('at-search').value = '';
+  $('at-task').selectedIndex = -1;
+  $('at-submit-assign').disabled = true;
+  $('assign-modal-backdrop').classList.add('open');
+  setTimeout(() => $('at-search').focus(), 100);
+}
+function closeAssignModal() { $('assign-modal-backdrop').classList.remove('open'); }
+function filterAssignTasks(q) {
+  q = q.toLowerCase();
+  Array.from($('at-task').options).forEach(opt => { opt.hidden = !!q && !opt.text.toLowerCase().includes(q); });
+  updateAssignSubmit();
+}
+function updateAssignSubmit() {
+  const sel = $('at-task');
+  const hasTask = sel.value && !sel.options[sel.selectedIndex]?.hidden;
+  $('at-submit-assign').disabled = !hasTask || !$('at-user').value;
+}
+async function submitAssign() {
+  const taskGid = $('at-task').value;
+  const userGid = $('at-user').value;
+  if (!taskGid || !userGid) return;
+  const btn = $('at-submit-assign');
+  btn.disabled = true; btn.textContent = 'Assigning…';
+  try {
+    const taskName = $('at-task').options[$('at-task').selectedIndex].text;
+    const userName = $('at-user').options[$('at-user').selectedIndex].text;
+    const r = await asana('PUT', `/tasks/${taskGid}`, { data: { assignee: userGid } });
+    if (r.errors) throw new Error(r.errors[0].message);
+    addMsg('agent', `Assigned <strong>${taskName}</strong> to <strong>${userName}</strong>.`, 'success');
+    closeAssignModal();
+    fetchAndCacheTasks(false, true);
+  } catch(e) {
+    addMsg('agent', 'Failed to assign: ' + e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = 'Assign';
+}
+function openCreateTask() {
+  if (!asanaToken) { addMsg('agent','Please connect first.','error'); return; }
+  if (!panelOpen) { togglePanel(); setTimeout(openQuickAdd, 340); } else { openQuickAdd(); }
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
 }
 </script>
+
+<div id="assign-modal-backdrop" class="chat-modal-backdrop" onclick="if(event.target===this)closeAssignModal()">
+  <div class="chat-modal">
+    <div class="chat-modal-head">
+      <span class="chat-modal-title">Assign Task</span>
+      <button class="panel-icon-btn" onclick="closeAssignModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="chat-modal-body">
+      <div class="qa-field">
+        <label>Task</label>
+        <input id="at-search" placeholder="Filter tasks…" oninput="filterAssignTasks(this.value)" autocomplete="off" />
+        <select id="at-task" size="5" onchange="updateAssignSubmit()"></select>
+      </div>
+      <div class="qa-field">
+        <label>Assign to</label>
+        <select id="at-user" onchange="updateAssignSubmit()"></select>
+      </div>
+      <button id="at-submit-assign" onclick="submitAssign()" disabled>Assign</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
