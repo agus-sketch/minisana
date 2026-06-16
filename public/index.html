@@ -380,6 +380,9 @@
             <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">Generate my daily standup</span>
             <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">What's overdue?</span>
             <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">Who has the most tasks?</span>
+            <span class="chip" onclick="$('userInput').value='Assign task to ';$('userInput').focus()">Assign to…</span>
+            <span class="chip" onclick="$('userInput').value=this.textContent;$('userInput').focus()">Due today</span>
+            <span class="chip" onclick="$('userInput').value='Create a task: ';$('userInput').focus()">Create task…</span>
           </div>
         </div>
       </div>
@@ -1235,7 +1238,13 @@ async function connect() {
     renderProjectPicker();
     const wb=$('welcome-bubble'); if(wb) wb.closest('.msg').remove();
     addMsg('agent',`Connected as <strong>${me.name}</strong> → <strong>${found.name}</strong>`,'success');
-    addMsg('agent','What can I do for you?');
+    addMsg('agent','What can I do for you?'
+      + '<div class="chips">'
+      + '<span class="chip" onclick="$(\'userInput\').value=\'Assign task to \';$(\'userInput\').focus()">Assign to…</span>'
+      + '<span class="chip" onclick="$(\'userInput\').value=\'List my open tasks grouped by project\';send()">List tasks</span>'
+      + '<span class="chip" onclick="$(\'userInput\').value=\'What tasks are due today?\';send()">Due today</span>'
+      + '<span class="chip" onclick="$(\'userInput\').value=\'Create a task: \';$(\'userInput\').focus()">Create task…</span>'
+      + '</div>');
     btn.textContent='Connected ✓'; setTimeout(()=>{btn.textContent='Connect';btn.disabled=false;},2500);
     await fetchAndCacheTasks(true);
     startBackgroundPoll();
