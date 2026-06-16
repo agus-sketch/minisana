@@ -1,4 +1,4 @@
-const CACHE = 'minisana-v2';
+const CACHE = 'minisana-v3';
 const SHELL = ['/'];
 
 // API routes that must always go to the network
