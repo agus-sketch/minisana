@@ -127,6 +127,9 @@
     .chip:hover { background: #fff0f0; border-color: var(--red); color: var(--red); transform: translateY(-1px); }
     body.dark .chip:hover { background: rgba(240,106,106,.1); }
     .chip:disabled { opacity: .45; cursor: default; transform: none; }
+    #suggestion-chips { display: none; padding: 7px 14px; border-top: 1px solid var(--border-light); overflow-x: auto; flex-shrink: 0; background: var(--surface-2); -ms-overflow-style: none; scrollbar-width: none; }
+    #suggestion-chips::-webkit-scrollbar { display: none; }
+    #suggestion-chips.visible { display: flex; gap: 6px; align-items: center; }
     #inputbar { padding: 13px 18px; border-top: 1px solid var(--border-light); display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
     #userInput { flex: 1; resize: none; font-size: 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-m); font-family: inherit; line-height: 1.5; color: var(--text); outline: none; max-height: 120px; background: var(--surface-2); transition: border-color .15s, box-shadow .15s, background .15s; }
     #userInput:focus { border-color: var(--red); background: var(--surface); box-shadow: 0 0 0 3px var(--red-glow); }
@@ -401,6 +404,7 @@
         </div>
       </div>
       <div id="chat-image-bar" style="display:none"></div>
+      <div id="suggestion-chips"></div>
       <div id="inputbar">
         <button id="chatAttachBtn" type="button" onclick="$('chatImageInput').click()" title="Attach image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 1 1-8.49-8.49l9.19-9.19a4 4 0 1 1 5.66 5.66l-9.2 9.19a2 2 0 1 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="chatImageInput" accept="image/*" style="display:none" onchange="onChatImageChange(this)" />
@@ -1085,6 +1089,12 @@ function addMsg(role, html, type) {
 function showTyping() { const w=document.createElement('div'); w.className='msg agent'; w.id='typing'; w.innerHTML='<div class="bubble"><div class="typing-wrap"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div></div>'; $('messages').appendChild(w); $('messages').scrollTop=$('messages').scrollHeight; }
 function removeTyping() { const t=$('typing'); if(t)t.remove(); }
 function fill(el) { $('userInput').value=el.textContent; $('userInput').focus(); }
+function sendChip(text) { $('userInput').value=text; send(); }
+function showSuggestionChips() {
+  const sc=$('suggestion-chips');
+  sc.innerHTML=`<span class="chip" onclick="sendChip('List my open tasks grouped by project')">List tasks</span><span class="chip" onclick="sendChip('What tasks are due today?')">Due today</span><span class="chip" onclick="sendChip('Generate my daily standup')">Standup</span><span class="chip" onclick="sendChip('What\\'s overdue?')">Overdue</span><span class="chip" onclick="openAssignModal()">Assign to…</span><span class="chip" onclick="openCreateTask()">New task…</span>`;
+  sc.classList.add('visible');
+}
 function askCapabilities(btn) {
   btn.disabled=true; addMsg('user','What can I ask you?'); showTyping();
   setTimeout(()=>{
@@ -1252,13 +1262,8 @@ async function connect() {
     renderProjectPicker();
     const wb=$('welcome-bubble'); if(wb) wb.closest('.msg').remove();
     addMsg('agent',`Connected as <strong>${me.name}</strong> → <strong>${found.name}</strong>`,'success');
-    addMsg('agent','What can I do for you?'
-      + '<div class="chips">'
-      + '<span class="chip" onclick="openAssignModal()">Assign to…</span>'
-      + '<span class="chip" onclick="$(\'userInput\').value=\'List my open tasks grouped by project\';send()">List tasks</span>'
-      + '<span class="chip" onclick="$(\'userInput\').value=\'What tasks are due today?\';send()">Due today</span>'
-      + '<span class="chip" onclick="openCreateTask()">Create task…</span>'
-      + '</div>');
+    addMsg('agent','What can I do for you?');
+    showSuggestionChips();
     btn.textContent='Connected ✓'; setTimeout(()=>{btn.textContent='Connect';btn.disabled=false;},2500);
     await fetchAndCacheTasks(true);
     startBackgroundPoll();
@@ -1343,9 +1348,30 @@ async function send() {
 
   try {
     await fetchAndCacheTasks();
-    const tasks=cachedTasks, sections=cachedSections;
+    const sections=cachedSections;
+    const tl = text.toLowerCase();
 
-    const toSum=t=>({name:t.name,assignee:t.assignee?{name:t.assignee.name,email:t.assignee.email}:null,due:t.due_on||null,section:t._section||null,num_subtasks:t.num_subtasks||0});
+    // Detect cross-project intent — fetch tasks from all projects in parallel.
+    const wantsCrossProject = /group\w*\s+by\s+project|by\s+project|all\s+projects?|every\s+project|across\s+projects?/.test(tl);
+    let tasks = cachedTasks;
+    if (wantsCrossProject && allProjects.length > 1) {
+      const fetches = allProjects.map(async p => {
+        if (p.gid === projectGid) return cachedTasks.map(t => ({ ...t, _projectName: projectName }));
+        try {
+          const r = await asana('GET', `/projects/${p.gid}/tasks?opt_fields=name,gid,completed,assignee.name,due_on,memberships.section.name,memberships.project.gid&limit=100`);
+          return (r.data || []).map(t => ({
+            ...t,
+            _projectName: p.name,
+            _section: t.memberships?.find(m => m.project?.gid === p.gid)?.section?.name || null
+          }));
+        } catch { return []; }
+      });
+      tasks = (await Promise.all(fetches)).flat();
+    }
+
+    const toSum = wantsCrossProject
+      ? t=>({name:t.name,assignee:t.assignee?{name:t.assignee.name,email:t.assignee.email}:null,due:t.due_on||null,section:t._section||null,project:t._projectName||projectName,num_subtasks:t.num_subtasks||0})
+      : t=>({name:t.name,assignee:t.assignee?{name:t.assignee.name,email:t.assignee.email}:null,due:t.due_on||null,section:t._section||null,num_subtasks:t.num_subtasks||0});
     const openTasks=tasks.filter(t=>!t.completed).map(toSum);
     const doneTasks=tasks.filter(t=> t.completed).map(toSum);
     const today=new Date().toISOString().slice(0,10);
@@ -1359,14 +1385,15 @@ async function send() {
       : '';
 
     // Trim heuristics — only include sections relevant to the current message to shrink prompt size for local LLMs.
-    const tl = text.toLowerCase();
     const includeDone    = /done|finish|complet|did|standup|yesterday|past|history|recap/.test(tl);
     const includeTags    = /\btag(s|ged)?\b|\blabel\b|categor|urgent|priority|important/.test(tl) || workspaceTags.some(t=>t.name&&tl.includes(t.name.toLowerCase()));
     const includeMembers = /assign|@|email|follower|delegate|who\b|team\b/.test(tl) || workspaceUsers.some(u=>u.name&&tl.includes(u.name.toLowerCase()));
 
+    const crossProjectNote = wantsCrossProject ? '\n=== CROSS-PROJECT MODE ===\nTasks span ALL projects. Each task has a "project" field — group your answer by it.\n' : '';
+
     const stateMsg = `=== STATE ===
 User: ${me?.name} <${me?.email}>
-Project: "${projectName}"
+Project: ${wantsCrossProject ? 'ALL PROJECTS' : `"${projectName}"`}
 Today: ${today}
 Tomorrow: ${tomorrow}
 
@@ -1378,7 +1405,7 @@ ${JSON.stringify(sections.map(s=>s.name))}
 
 === AVAILABLE PROJECTS ===
 ${JSON.stringify(allProjects.map(p=>p.name))}
-${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}\n` : ''}${includeMembers ? `\n=== TEAM MEMBERS ===\n${JSON.stringify(workspaceUsers.map(u=>({name:u.name,email:u.email})))}\n` : ''}${histCtx}${recentCtx}`;
+${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}\n` : ''}${includeMembers ? `\n=== TEAM MEMBERS ===\n${JSON.stringify(workspaceUsers.map(u=>({name:u.name,email:u.email})))}\n` : ''}${crossProjectNote}${histCtx}${recentCtx}`;
 
     // Stream the response; render the "answer" field progressively as tokens arrive.
     let liveBubble = null;
