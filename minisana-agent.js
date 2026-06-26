@@ -267,6 +267,46 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
   }
 }
 
+// ── Slack Events API ─────────────────────────────────────────────────────────
+app.post("/slack/events", async (req, res) => {
+  const { type, challenge, event } = req.body;
+
+  if (type === "url_verification") return res.json({ challenge });
+  if (!event || event.bot_id || event.type !== "message") return res.sendStatus(200);
+
+  res.sendStatus(200); // respond immediately before Slack's 3s timeout
+
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!slackToken || !groqKey) return;
+
+  try {
+    const llmRes = await fetch(LLM_URLS.groq, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
+      body: JSON.stringify({
+        model: LLM_MODELS.groq,
+        messages: [
+          { role: "system", content: "You are Minisana, an AI assistant for Asana task management. Help the user manage their tasks, answer questions about their projects, and provide actionable suggestions." },
+          { role: "user", content: event.text },
+        ],
+        temperature: 0.2,
+        max_tokens: 600,
+      }),
+    });
+    const data = await llmRes.json();
+    const reply = data.choices?.[0]?.message?.content ?? "Sorry, I couldn't process that.";
+
+    await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${slackToken}` },
+      body: JSON.stringify({ channel: event.channel, text: reply }),
+    });
+  } catch (e) {
+    console.error("Slack handler error:", e.message);
+  }
+});
+
 // ── Warm a specific Ollama model on demand ───────────────────────────────────
 app.post("/warm", async (req, res) => {
   const { model } = req.body || {};
