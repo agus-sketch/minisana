@@ -903,7 +903,7 @@ app.post("/slack/events", async (req, res) => {
     body: JSON.stringify({ channel: event.channel, text }),
   });
 
-  waitUntil(async () => {
+  waitUntil((async () => {
     try {
       const asanaToken = await getAsanaTokenForUser(event.user);
       if (!asanaToken) {
@@ -917,7 +917,7 @@ app.post("/slack/events", async (req, res) => {
       console.error("Slack handler error:", e.message);
       await postMessage("Something went wrong. Please try again.").catch(() => {});
     }
-  });
+  })());
 });
 
 // ── Warm a specific Ollama model on demand ───────────────────────────────────
