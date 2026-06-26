@@ -277,25 +277,27 @@ app.post("/slack/events", async (req, res) => {
   res.sendStatus(200); // respond immediately before Slack's 3s timeout
 
   const slackToken = process.env.SLACK_BOT_TOKEN;
-  const groqKey = process.env.GROQ_API_KEY;
-  if (!slackToken || !groqKey) return;
+  const claudeKey = process.env.ANTHROPIC_API_KEY;
+  if (!slackToken || !claudeKey) return;
 
   try {
-    const llmRes = await fetch(LLM_URLS.groq, {
+    const llmRes = await fetch(LLM_URLS.anthropic, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": claudeKey,
+        "anthropic-version": "2023-06-01",
+      },
       body: JSON.stringify({
-        model: LLM_MODELS.groq,
-        messages: [
-          { role: "system", content: "You are Minisana, an AI assistant for Asana task management. Help the user manage their tasks, answer questions about their projects, and provide actionable suggestions." },
-          { role: "user", content: event.text },
-        ],
+        model: LLM_MODELS.anthropic,
+        system: "You are Minisana, an AI assistant for Asana task management. Help the user manage their tasks, answer questions about their projects, and provide actionable suggestions.",
+        messages: [{ role: "user", content: event.text }],
         temperature: 0.2,
         max_tokens: 600,
       }),
     });
     const data = await llmRes.json();
-    const reply = data.choices?.[0]?.message?.content ?? "Sorry, I couldn't process that.";
+    const reply = data.content?.[0]?.text ?? "Sorry, I couldn't process that.";
 
     await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
