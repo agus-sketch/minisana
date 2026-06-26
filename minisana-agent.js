@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
+import { waitUntil } from "@vercel/functions";
 import multer from "multer";
 import os from "os";
 import path from "path";
@@ -902,19 +903,21 @@ app.post("/slack/events", async (req, res) => {
     body: JSON.stringify({ channel: event.channel, text }),
   });
 
-  try {
-    const asanaToken = await getAsanaTokenForUser(event.user);
-    if (!asanaToken) {
-      const connectUrl = `https://minisana.vercel.app/auth/asana?slack_user_id=${event.user}`;
-      await postMessage(`Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`);
-      return;
+  waitUntil(async () => {
+    try {
+      const asanaToken = await getAsanaTokenForUser(event.user);
+      if (!asanaToken) {
+        const connectUrl = `https://minisana.vercel.app/auth/asana?slack_user_id=${event.user}`;
+        await postMessage(`Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`);
+        return;
+      }
+      const reply = await runSlackAgent(event.text, event.channel, asanaToken);
+      await postMessage(reply);
+    } catch (e) {
+      console.error("Slack handler error:", e.message);
+      await postMessage("Something went wrong. Please try again.").catch(() => {});
     }
-    const reply = await runSlackAgent(event.text, event.channel, asanaToken);
-    await postMessage(reply);
-  } catch (e) {
-    console.error("Slack handler error:", e.message);
-    await postMessage("Something went wrong. Please try again.").catch(() => {});
-  }
+  });
 });
 
 // ── Warm a specific Ollama model on demand ───────────────────────────────────
