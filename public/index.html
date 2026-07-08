@@ -12,6 +12,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Minisana" />
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1080,7 +1081,7 @@ async function submitQuickAdd() {
 // ── Messages ──────────────────────────────────────────────────────────────
 function addMsg(role, html, type) {
   const wrap=document.createElement('div'); wrap.className='msg '+role;
-  const b=document.createElement('div'); b.className='bubble'+(type?' '+type:''); b.innerHTML=html;
+  const b=document.createElement('div'); b.className='bubble'+(type?' '+type:''); b.innerHTML=DOMPurify.sanitize(html);
   const t=document.createElement('span'); t.className='msg-time'; t.textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   wrap.appendChild(b); wrap.appendChild(t);
   $('messages').appendChild(wrap); $('messages').scrollTop=$('messages').scrollHeight;
@@ -1413,7 +1414,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
       const partial = extractStreamingAnswer(full);
       if (partial == null) return;
       if (!liveBubble) { removeTyping(); liveBubble = addMsg('agent', ''); }
-      liveBubble.innerHTML = partial;
+      liveBubble.innerHTML = DOMPurify.sanitize(partial);
       const m = $('messages'); m.scrollTop = m.scrollHeight;
     };
 
@@ -1431,7 +1432,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
     removeTyping();
 
     if(parsed?.answer) {
-      if (liveBubble) liveBubble.innerHTML = parsed.answer;
+      if (liveBubble) liveBubble.innerHTML = DOMPurify.sanitize(parsed.answer);
       else addMsg('agent', parsed.answer);
       chatHistory.push({role:'user',content:text},{role:'agent',content:stripHtml(parsed.answer)});
       if(chatHistory.length>30) chatHistory.splice(0,chatHistory.length-30);
@@ -1663,10 +1664,10 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
             streamed=await callLLM([
               {role:'system',content:explainSys},
               {role:'user',content:`Task data (JSON):\n${JSON.stringify(ctx,null,2)}\n\nExplain this task to me in plain language.`}
-            ],(full)=>{bubble.innerHTML=full;const m=$('messages');m.scrollTop=m.scrollHeight;});
-            bubble.innerHTML=streamed||'<em>(no explanation produced)</em>';
+            ],(full)=>{bubble.innerHTML=DOMPurify.sanitize(full);const m=$('messages');m.scrollTop=m.scrollHeight;});
+            bubble.innerHTML=DOMPurify.sanitize(streamed||'<em>(no explanation produced)</em>');
           }catch(e){
-            bubble.innerHTML=`<em>Couldn't generate explanation: ${e.message}</em>`;
+            bubble.innerHTML=DOMPurify.sanitize(`<em>Couldn't generate explanation: ${e.message}</em>`);
             bubble.classList.add('error');
           }
           recentContext=[{type:'task',name:task.name,gid:task.gid}];

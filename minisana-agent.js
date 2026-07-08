@@ -665,7 +665,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
   catch { return "Couldn't parse the response. Try rephrasing."; }
 
   if (parsed?.answer) {
-    const reply = htmlToSlack(parsed.answer);
+    const reply = escapeSlackText(htmlToSlack(parsed.answer));
     state.chatHistory.push({ role: "user", content: text }, { role: "agent", content: reply });
     if (state.chatHistory.length > 20) state.chatHistory.splice(0, state.chatHistory.length - 20);
     const mentioned = tasks.filter(t => t.name && reply.toLowerCase().includes(t.name.toLowerCase()));
@@ -933,7 +933,10 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
   if (!results.length) return "Done.";
   const allOk = results.every(r => r.ok);
   const prefix = !allOk ? "Finished with issues:" : results.every(r => r.readonly) ? "Here's what I found:" : "Done!";
-  return prefix + "\n" + results.map(r => `${r.ok ? "✓" : "✗"} ${r.msg}`).join("\n");
+  // results[].msg may embed Asana-derived data (task/section/tag/user names, notes,
+  // comments) interpolated directly by the code above — escape the assembled text
+  // as a whole so none of it can be read by Slack as link/mention mrkdwn syntax.
+  return escapeSlackText(prefix + "\n" + results.map(r => `${r.ok ? "✓" : "✗"} ${r.msg}`).join("\n"));
 }
 
 // ── Slack Events API ─────────────────────────────────────────────────────────
