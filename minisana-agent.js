@@ -8,6 +8,7 @@ import path from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
+import crypto from "crypto";
 import { recommendModel } from "./recommend.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,7 +27,11 @@ async function ensureOllama() {
     console.log("✓ Ollama already running");
   } catch {
     console.log("⚙ Starting Ollama...");
-    spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+    const ollamaProc = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+    ollamaProc.on("error", (err) => {
+      console.log(`⚠ Could not start ollama (${err.code || err.message}) — ollama not found, local model unavailable`);
+    });
+    ollamaProc.unref();
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 500));
       try { await fetch("http://localhost:11434"); console.log("✓ Ollama ready"); return; } catch {}
@@ -53,8 +58,35 @@ async function logRecommendation() {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.static(path.join(__dirname, "public")));
+
+// ── Slack request signature verification (HMAC, replay-protected) ───────────
+function verifySlackSignature(req, res, next) {
+  const signingSecret = process.env.SLACK_SIGNING_SECRET;
+  if (!signingSecret) {
+    console.error("SLACK_SIGNING_SECRET is not set — rejecting Slack request");
+    return res.sendStatus(401);
+  }
+  const timestamp = req.headers["x-slack-request-timestamp"];
+  const signature = req.headers["x-slack-signature"];
+  if (!timestamp || !signature) return res.sendStatus(401);
+
+  const fiveMinutes = 60 * 5;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > fiveMinutes) return res.sendStatus(401);
+
+  const rawBody = req.rawBody ? req.rawBody.toString("utf8") : "";
+  const base = `v0:${timestamp}:${rawBody}`;
+  const hmac = crypto.createHmac("sha256", signingSecret).update(base).digest("hex");
+  const expected = `v0=${hmac}`;
+
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const signatureBuf = Buffer.from(signature, "utf8");
+  if (expectedBuf.length !== signatureBuf.length || !crypto.timingSafeEqual(expectedBuf, signatureBuf)) {
+    return res.sendStatus(401);
+  }
+  next();
+}
 
 const ASANA_API = "https://app.asana.com/api/1.0";
 
@@ -141,19 +173,20 @@ app.post("/llm", async (req, res) => {
   const model = req.body.model       || LLM_MODELS[provider] || LLM_MODELS.groq;
   const msgs  = messages || [{ role: "user", content: prompt }];
 
-  if (provider === "anthropic") return handleAnthropic({ res, llmKey, url, model, msgs, stream });
+  if (provider === "anthropic") return handleAnthropic({ req, res, llmKey, url, model, msgs, stream });
 
   const headers = { "Content-Type": "application/json" };
   if (llmKey) headers.Authorization = `Bearer ${llmKey}`;
 
-  const payload = { model, messages: msgs, temperature: 0.2, max_tokens: 600 };
+  const payload = { model, messages: msgs, temperature: 0.2, max_tokens: 600, response_format: { type: "json_object" } };
   if (stream) payload.stream = true;
-  else payload.response_format = { type: "json_object" };
   if (provider === "ollama") payload.keep_alive = "30m";
 
   const ctrl = new AbortController();
   const timeout = provider === "ollama" ? 120000 : 30000;
   const timer = setTimeout(() => ctrl.abort(), timeout);
+  const onClientClose = () => ctrl.abort();
+  req.on("close", onClientClose);
 
   try {
     const r = await fetch(url, {
@@ -173,14 +206,17 @@ app.post("/llm", async (req, res) => {
         // upstream stream error — best-effort close
       }
       clearTimeout(timer);
+      req.off("close", onClientClose);
       res.end();
       return;
     }
 
     clearTimeout(timer);
+    req.off("close", onClientClose);
     res.json(await r.json());
   } catch (e) {
     clearTimeout(timer);
+    req.off("close", onClientClose);
     const msg = e.name === "AbortError" ? "LLM timed out — try again" : e.message;
     if (res.headersSent) res.end();
     else res.status(500).json({ error: msg });
@@ -188,7 +224,7 @@ app.post("/llm", async (req, res) => {
 });
 
 // ── Anthropic adapter (translates to/from OpenAI shape so the UI is unchanged)
-async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
+async function handleAnthropic({ req, res, llmKey, url, model, msgs, stream }) {
   const sys = msgs
     .filter(m => m.role === "system")
     .map(m => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
@@ -207,6 +243,8 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
+  const onClientClose = () => ctrl.abort();
+  req.on("close", onClientClose);
 
   try {
     const r = await fetch(url, {
@@ -222,6 +260,7 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
 
     if (!r.ok) {
       clearTimeout(timer);
+      req.off("close", onClientClose);
       const err = await r.text();
       return res.status(r.status).json({ error: `Anthropic: ${err}` });
     }
@@ -252,16 +291,19 @@ async function handleAnthropic({ res, llmKey, url, model, msgs, stream }) {
         }
       } catch {}
       clearTimeout(timer);
+      req.off("close", onClientClose);
       res.end();
       return;
     }
 
     clearTimeout(timer);
+    req.off("close", onClientClose);
     const data = await r.json();
     const text = "{" + (data.content || []).map(b => b.text || "").join("");
     res.json({ choices: [{ message: { role: "assistant", content: text } }] });
   } catch (e) {
     clearTimeout(timer);
+    req.off("close", onClientClose);
     const msg = e.name === "AbortError" ? "LLM timed out — try again" : e.message;
     if (res.headersSent) res.end();
     else res.status(500).json({ error: msg });
@@ -510,13 +552,14 @@ function htmlToSlack(html) {
     .trim();
 }
 
-// Per-channel state — lost on Vercel cold start, acceptable for MVP
+// Per-channel-per-user state — lost on Vercel cold start, acceptable for MVP
 const slackChannelState = new Map();
-function getSlackChannelState(channelId) {
-  if (!slackChannelState.has(channelId)) {
-    slackChannelState.set(channelId, { chatHistory: [], recentContext: [], projectGid: null, projectName: null, allProjects: [], workspaceUsers: [], workspaceTags: [], workspaceGid: null, me: null });
+function getSlackChannelState(channelId, slackUserId) {
+  const key = `${channelId}:${slackUserId}`;
+  if (!slackChannelState.has(key)) {
+    slackChannelState.set(key, { chatHistory: [], recentContext: [], projectGid: null, projectName: null, allProjects: [], workspaceUsers: [], workspaceTags: [], workspaceGid: null, me: null });
   }
-  return slackChannelState.get(channelId);
+  return slackChannelState.get(key);
 }
 
 async function asanaReq(method, endpoint, body, token) {
@@ -527,11 +570,11 @@ async function asanaReq(method, endpoint, body, token) {
   return r.json();
 }
 
-async function runSlackAgent(text, channelId, asanaToken) {
+async function runSlackAgent(text, channelId, asanaToken, slackUserId) {
   const claudeKey = process.env.ANTHROPIC_API_KEY;
   if (!asanaToken || !claudeKey) return "Missing Asana token or ANTHROPIC_API_KEY env var.";
 
-  const state = getSlackChannelState(channelId);
+  const state = getSlackChannelState(channelId, slackUserId);
 
   if (!state.workspaceGid) {
     try {
@@ -886,7 +929,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
 }
 
 // ── Slack Events API ─────────────────────────────────────────────────────────
-app.post("/slack/events", async (req, res) => {
+app.post("/slack/events", verifySlackSignature, async (req, res) => {
   const { type, challenge, event } = req.body;
 
   if (type === "url_verification") return res.json({ challenge });
