@@ -954,7 +954,7 @@ app.post("/slack/events", verifySlackSignature, async (req, res) => {
         await postMessage(`Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`);
         return;
       }
-      const reply = await runSlackAgent(event.text, event.channel, asanaToken);
+      const reply = await runSlackAgent(event.text, event.channel, asanaToken, event.user);
       await postMessage(reply);
     } catch (e) {
       console.error("Slack handler error:", e.message);
