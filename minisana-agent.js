@@ -538,6 +538,14 @@ function slackParseDate(s) {
   return s;
 }
 
+// Escapes Slack mrkdwn control characters so Asana-derived text (task names,
+// notes, project/section/tag/user names, comments, etc.) can't be interpreted
+// as Slack link/mention syntax (e.g. "<!channel>", "<@U123>", "<http://x|y>").
+function escapeSlackText(str) {
+  if (str == null) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function htmlToSlack(html) {
   if (!html) return "";
   return html
