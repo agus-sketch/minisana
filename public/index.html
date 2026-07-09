@@ -209,14 +209,18 @@
     .subtask-row .task-name { font-size: 12px; }
 
     /* Bulk toolbar */
-    #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 8px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
-    #bulk-toolbar.visible { max-height: 52px; padding: 10px 8px; border-top-width: 1px; }
+    #bulk-toolbar { overflow: hidden; max-height: 0; transition: max-height .2s ease, padding .2s ease; padding: 0 8px; border-top: 0 solid var(--border-light); background: var(--surface); display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex-shrink: 0; }
+    #bulk-toolbar.visible { max-height: 110px; padding: 10px 8px; border-top-width: 1px; }
     #bulk-count { font-size: 12px; font-weight: 700; color: var(--text); flex: 1; min-width: 0; }
+    .bulk-selectall { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-2); cursor: pointer; flex-shrink: 0; user-select: none; }
+    .bulk-selectall input { cursor: pointer; }
     .bulk-btn { padding: 5px 10px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); cursor: pointer; font-family: inherit; white-space: nowrap; transition: background .12s, color .12s; }
     .bulk-btn:hover { background: var(--surface-3); }
     .bulk-btn.primary { background: var(--green-bg); border-color: var(--green-border); color: var(--green); }
     .bulk-btn.primary:hover { background: var(--green-border); }
-    #bulk-section { font-size: 11.5px; padding: 5px 4px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); font-family: inherit; outline: none; cursor: pointer; max-width: 90px; flex-shrink: 1; min-width: 0; }
+    .bulk-btn.danger { background: var(--err-bg); border-color: var(--err-border); color: var(--err-text); }
+    .bulk-btn.danger:hover { background: var(--err-border); }
+    #bulk-section, #bulk-reassign { font-size: 11.5px; padding: 5px 4px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface); color: var(--text-2); font-family: inherit; outline: none; cursor: pointer; max-width: 90px; flex-shrink: 1; min-width: 0; }
     #bulk-clear { width: 28px; height: 28px; padding: 0; font-size: 14px; flex-shrink: 0; }
 
     /* Panel overlays (detail + quick-add) */
@@ -448,10 +452,17 @@
       <div id="panel-body"><div class="panel-empty">Connect to see your project tasks.</div></div>
 
       <div id="bulk-toolbar">
+        <label class="bulk-selectall" title="Select all visible tasks">
+          <input type="checkbox" id="bulk-select-all" onchange="toggleSelectAll(this.checked)" /> All
+        </label>
         <span id="bulk-count">0 selected</span>
         <button class="bulk-btn primary" onclick="bulkComplete()">✓ Complete</button>
+        <button class="bulk-btn danger" onclick="bulkDelete()">🗑 Delete</button>
         <select id="bulk-section" onchange="bulkMove(this.value)">
           <option value="">Move to…</option>
+        </select>
+        <select id="bulk-reassign" onchange="bulkReassign(this.value)">
+          <option value="">Reassign to…</option>
         </select>
         <button class="bulk-btn" id="bulk-clear" onclick="clearSelection()" title="Clear selection">✕</button>
       </div>
@@ -510,6 +521,7 @@ let currentDetailGid = null, detailComposerImage = null, pendingChatImage = null
 
 const STORAGE_KEY = 'minisana-creds', KEYS_KEY = 'minisana-keys';
 const THEME_KEY = 'minisana-theme', PROV_KEY = 'minisana-provider';
+const SESSION_ID_KEY = 'minisana_session_id';
 
 // Stable static rules — kept byte-identical across turns so local-LLM prefix kv-cache is reused.
 // All per-turn data (user, project, today, tasks, history, recent context) goes in a separate state message.
@@ -682,6 +694,41 @@ function savedProjectGid() { try { return JSON.parse(localStorage.getItem(STORAG
 function activeLLMKey() { return provider==='openai' ? openaiKey : provider==='anthropic' ? anthropicKey : provider==='ollama' ? '' : groqKey; }
 function activeLLMModel() { return provider==='ollama' ? ollamaModel||'qwen2.5:14b' : provider==='anthropic' ? anthropicModel : undefined; }
 
+// ── Session persistence (chat history / last-viewed project across reloads) ─
+// This is separate from saveCreds/STORAGE_KEY above — that stores the Asana
+// token + API keys; this only stores UI/chat state via the server's KV-backed
+// /session endpoints, keyed by an opaque id kept in localStorage. No id is
+// generated until there's actually something worth saving (a chat message or
+// a project switch) — see scheduleSessionSave()'s call sites.
+let _sessionSaveTimer = null;
+function scheduleSessionSave() {
+  clearTimeout(_sessionSaveTimer);
+  _sessionSaveTimer = setTimeout(saveSession, 2000);
+}
+async function saveSession() {
+  try {
+    const id = localStorage.getItem(SESSION_ID_KEY) || undefined;
+    const body = { data: { chatHistory, projectGid, projectName } };
+    if (id) body.id = id;
+    const r = await fetch('/session', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.id) localStorage.setItem(SESSION_ID_KEY, d.id);
+  } catch {}
+}
+async function restoreSession() {
+  const id = localStorage.getItem(SESSION_ID_KEY);
+  if (!id) return;
+  try {
+    const r = await fetch(`/session/${encodeURIComponent(id)}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.data || !Array.isArray(d.data.chatHistory) || !d.data.chatHistory.length) return;
+    chatHistory = d.data.chatHistory;
+    const wb = $('welcome-bubble'); if (wb) wb.closest('.msg').remove();
+    for (const m of chatHistory) addMsg(m.role === 'user' ? 'user' : 'agent', escHtml(m.content));
+  } catch {}
+}
+
 // ── Dark mode ─────────────────────────────────────────────────────────────
 function applyTheme() {
   document.body.classList.toggle('dark', darkMode);
@@ -773,6 +820,7 @@ async function switchProject(idx) {
   pickerOpen=false; $('project-dropdown').classList.remove('open'); $('projectPickerBtn').classList.remove('open');
   $('status-pill').textContent='● '+p.name; saveCreds(); renderProjectPicker();
   addMsg('agent',`Switched to <strong>${p.name}</strong>.`,'success');
+  scheduleSessionSave();
   cachedTasks=[]; cachedSections=[]; selectedTasks.clear(); selectMode=false; updateSelectMode(); expandedTasks.clear(); subtaskCache={};
   if(panelOpen) renderPanel();
   await fetchAndCacheTasks(true);
@@ -781,8 +829,8 @@ document.addEventListener('click', e => { if(pickerOpen&&!e.target.closest('.pro
 
 // ── Panel core ────────────────────────────────────────────────────────────
 function togglePanel() { panelOpen=!panelOpen; $('app').classList.toggle('panel-open',panelOpen); $('task-panel').classList.toggle('open',panelOpen); $('panelBtn').classList.toggle('open',panelOpen); if(panelOpen&&cachedTasks.length) renderPanel(); }
-function setPanelFilter(f,btn) { panelFilter=f; document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); btn.classList.add('active'); renderAssigneeChips(); renderPanel(); }
-function onPanelSearch(v) { panelSearch=v.trim().toLowerCase(); $('searchClear').classList.toggle('visible',!!panelSearch); renderPanel(); }
+function setPanelFilter(f,btn) { panelFilter=f; document.querySelectorAll('.ptab').forEach(t=>t.classList.remove('active')); btn.classList.add('active'); renderAssigneeChips(); renderPanel(); if(selectMode) updateSelectMode(); }
+function onPanelSearch(v) { panelSearch=v.trim().toLowerCase(); $('searchClear').classList.toggle('visible',!!panelSearch); renderPanel(); if(selectMode) updateSelectMode(); }
 function clearPanelSearch() { $('panelSearch').value=''; onPanelSearch(''); $('panelSearch').focus(); }
 
 async function refreshPanel() { const b=$('refreshBtn'); b.classList.add('spinning'); await fetchAndCacheTasks(false, true); b.classList.remove('spinning'); }
@@ -813,7 +861,7 @@ async function fetchAndCacheTasks(checkOD=false, force=false) {
     });
     lastFetchedAt = Date.now();
     for(const gid of Object.keys(subtaskCache)) if(!cachedTasks.some(t=>t.gid===gid)) delete subtaskCache[gid];
-    renderAssigneeChips(); renderBulkSectionSelect();
+    renderAssigneeChips(); renderBulkSectionSelect(); renderBulkReassignSelect();
     if(panelOpen) renderPanel();
     if(checkOD) checkOverdue();
   } catch {}
@@ -844,17 +892,34 @@ function renderAssigneeChips() {
     </span>`
   ).join('');
 }
-function setAssigneeFilter(n) { assigneeFilter=n; renderAssigneeChips(); renderPanel(); }
+function setAssigneeFilter(n) { assigneeFilter=n; renderAssigneeChips(); renderPanel(); if(selectMode) updateSelectMode(); }
 
 // ── Bulk select ───────────────────────────────────────────────────────────
+// This is the "bulk actions" view: toggling select mode (the header's
+// "Select tasks" button) turns cachedTasks' rows into a checkbox table
+// (per-row checkboxes are rendered in renderPanel below) and reveals
+// #bulk-toolbar with a "select all" checkbox plus Complete / Delete /
+// Reassign / Move actions, all of which fan out over the existing /asana
+// proxy per selected gid via Promise.allSettled — the same pattern the
+// chat-driven batch_complete/batch_move/batch_assign actions use above.
 function toggleSelectMode() { selectMode=!selectMode; if(!selectMode){selectedTasks.clear();} updateSelectMode(); renderPanel(); }
 function updateSelectMode() {
   $('selectBtn').classList.toggle('active',selectMode);
-  $('bulk-toolbar').classList.toggle('visible',selectMode&&selectedTasks.size>0);
+  $('bulk-toolbar').classList.toggle('visible',selectMode);
   $('bulk-count').textContent = selectedTasks.size === 0 ? 'Select tasks' : `${selectedTasks.size} task${selectedTasks.size !== 1 ? 's' : ''} selected`;
+  const selectAllBox=$('bulk-select-all');
+  if(selectAllBox) {
+    const visible=filteredPanelTasks();
+    selectAllBox.checked = visible.length>0 && visible.every(t=>selectedTasks.has(t.gid));
+  }
 }
 function toggleTaskSelect(gid) {
   if(selectedTasks.has(gid)) selectedTasks.delete(gid); else selectedTasks.add(gid);
+  updateSelectMode(); renderPanel();
+}
+function toggleSelectAll(checked) {
+  if(checked) filteredPanelTasks().forEach(t=>selectedTasks.add(t.gid));
+  else selectedTasks.clear();
   updateSelectMode(); renderPanel();
 }
 function clearSelection() { selectedTasks.clear(); selectMode=false; updateSelectMode(); renderPanel(); }
@@ -863,6 +928,25 @@ async function bulkComplete() {
   const gids=[...selectedTasks]; if(!gids.length) return;
   await Promise.all(gids.map(g=>asana('PUT',`/tasks/${g}`,{data:{completed:true}})));
   addMsg('agent',`Marked <strong>${gids.length}</strong> task${gids.length>1?'s':''} as complete.`,'success');
+  clearSelection(); fetchAndCacheTasks(false, true);
+}
+async function bulkDelete() {
+  const gids=[...selectedTasks]; if(!gids.length) return;
+  if(!confirm(`Delete ${gids.length} task${gids.length!==1?'s':''}? This cannot be undone.`)) return;
+  const bRes=await Promise.allSettled(gids.map(g=>asana('DELETE',`/tasks/${g}`)));
+  const done=bRes.filter(r=>r.status==='fulfilled'&&!r.value?.errors).length;
+  const failed=gids.length-done;
+  addMsg('agent',`${done} task${done!==1?'s':''} deleted${failed?`, <strong>${failed}</strong> failed`:''}.`, failed?'error':'success');
+  clearSelection(); fetchAndCacheTasks(false, true);
+}
+async function bulkReassign(userGid) {
+  if(!userGid) return; $('bulk-reassign').value='';
+  const gids=[...selectedTasks]; if(!gids.length) return;
+  const user=workspaceUsers.find(u=>u.gid===userGid);
+  const bRes=await Promise.allSettled(gids.map(g=>asana('PUT',`/tasks/${g}`,{data:{assignee:userGid}})));
+  const done=bRes.filter(r=>r.status==='fulfilled'&&!r.value?.errors).length;
+  const failed=gids.length-done;
+  addMsg('agent',`${done} task${done!==1?'s':''} reassigned to <strong>${user?.name||'user'}</strong>${failed?`, <strong>${failed}</strong> failed`:''}.`, failed?'error':'success');
   clearSelection(); fetchAndCacheTasks(false, true);
 }
 async function bulkMove(sectionGid) {
@@ -879,6 +963,12 @@ function renderBulkSectionSelect() {
   sel.innerHTML='<option value="">Move to…</option>'+cachedSections.map(s=>`<option value="${s.gid}">${s.name}</option>`).join('');
   sel.value=cur;
 }
+function renderBulkReassignSelect() {
+  const sel=$('bulk-reassign');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">Reassign to…</option>'+workspaceUsers.map(u=>`<option value="${u.gid}">${escHtml(u.name)}</option>`).join('');
+  sel.value=cur;
+}
 
 // ── Sub-task expand ───────────────────────────────────────────────────────
 async function expandTask(gid) {
@@ -892,13 +982,19 @@ async function expandTask(gid) {
 }
 
 // ── Panel render ──────────────────────────────────────────────────────────
-function renderPanel() {
-  const body=$('panel-body');
+// Shared by renderPanel (what's drawn) and toggleSelectAll (what "select
+// all" should select) so both always agree on which tasks are "visible".
+function filteredPanelTasks() {
   let tasks = panelFilter==='open' ? cachedTasks.filter(t=>!t.completed)
             : panelFilter==='done' ? cachedTasks.filter(t=> t.completed)
             : cachedTasks;
   if(panelSearch) tasks=tasks.filter(t=>t.name.toLowerCase().includes(panelSearch));
   if(assigneeFilter!=='all') tasks=tasks.filter(t=>t.assignee?.name===assigneeFilter);
+  return tasks;
+}
+function renderPanel() {
+  const body=$('panel-body');
+  let tasks = filteredPanelTasks();
 
   if(!tasks.length){ body.innerHTML=`<div class="panel-empty">No tasks found.</div>`; return; }
 
@@ -1283,6 +1379,7 @@ function startBackgroundPoll() {
 }
 
 if(loadCreds()) { $('welcome-bubble').textContent = "Hi, I'm Minisana! Reconnecting…"; connect(); }
+restoreSession();
 
 // ── Chat image staging ───────────────────────────────────────────────────
 function onChatImageChange(input) { const f=input.files?.[0]; if(f) setChatImage(f); input.value=''; }
@@ -1436,6 +1533,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
       else addMsg('agent', parsed.answer);
       chatHistory.push({role:'user',content:text},{role:'agent',content:stripHtml(parsed.answer)});
       if(chatHistory.length>30) chatHistory.splice(0,chatHistory.length-30);
+      scheduleSessionSave();
       const answerLower=parsed.answer.toLowerCase();
       const mentioned=cachedTasks.filter(t=>t.name&&answerLower.includes(t.name.toLowerCase()));
       const unnamedMentioned=(answerLower.includes('unnamed')||answerLower.includes('no name'))
@@ -1699,6 +1797,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
 
     chatHistory.push({role:'user',content:text},{role:'agent',content:results.map(r=>stripHtml(r.msg)).join('; ')});
     if(chatHistory.length>30) chatHistory.splice(0,chatHistory.length-30);
+    scheduleSessionSave();
 
     if(didMutate) fetchAndCacheTasks(false, true);
   }catch(err){removeTyping();addMsg('agent','Something went wrong: '+err.message,'error');}

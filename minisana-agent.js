@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import { recommendModel } from "./recommend.js";
+import { callLLM } from "./lib/llmClients.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -56,9 +57,30 @@ async function logRecommendation() {
   if (!have) console.log(`   ↳ pull it with:  ollama pull ${rec.recommended}`);
 }
 
+// ── Slack app manual configuration (api.slack.com/apps) ─────────────────────
+// This app exposes three Slack request URLs that must be wired up by hand in
+// the Slack app's admin config once it's deployed:
+//   1. Event Subscriptions  → Request URL: <deployed-base-url>/slack/events
+//   2. Slash Commands       → create a command named "/asana" with
+//                             Request URL: <deployed-base-url>/slack/commands
+//   3. Interactivity & Shortcuts (toggle "Interactivity" on) → Request URL:
+//                             <deployed-base-url>/slack/interactions
+// All three routes share the same SLACK_SIGNING_SECRET-based HMAC check
+// (verifySlackSignature) and both form-encoded routes (/slack/commands,
+// /slack/interactions) rely on captureRawBody below to populate req.rawBody.
+
+// Shared verify callback for body-parser: captures the raw request body
+// (before parsing) so verifySlackSignature can HMAC it, regardless of
+// whether the request is JSON (Events API) or form-encoded (slash commands /
+// interactivity payloads).
+function captureRawBody(req, res, buf) {
+  req.rawBody = buf;
+}
+
 const app = express();
 app.use(cors());
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use(express.json({ verify: captureRawBody }));
+app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ── Slack request signature verification (HMAC, replay-protected) ───────────
@@ -89,19 +111,6 @@ function verifySlackSignature(req, res, next) {
 }
 
 const ASANA_API = "https://app.asana.com/api/1.0";
-
-const LLM_URLS = {
-  groq:      "https://api.groq.com/openai/v1/chat/completions",
-  openai:    "https://api.openai.com/v1/chat/completions",
-  ollama:    "http://localhost:11434/v1/chat/completions",
-  anthropic: "https://api.anthropic.com/v1/messages",
-};
-const LLM_MODELS = {
-  groq:      "llama-3.3-70b-versatile",
-  openai:    "gpt-4o-mini",
-  ollama:    "qwen2.5:14b",
-  anthropic: "claude-haiku-4-5-20251001",
-};
 
 // ── Runtime config exposed to the UI ─────────────────────────────────────────
 app.get("/config", (req, res) => {
@@ -169,146 +178,45 @@ app.post("/llm", async (req, res) => {
   if (provider === "ollama" && !USE_OLLAMA) return res.status(400).json({ error: "Ollama disabled in setup" });
   if (!llmKey && provider !== "ollama") return res.status(400).json({ error: "Missing LLM API key" });
 
-  const url   = LLM_URLS[provider]   || LLM_URLS.groq;
-  const model = req.body.model       || LLM_MODELS[provider] || LLM_MODELS.groq;
-  const msgs  = messages || [{ role: "user", content: prompt }];
-
-  if (provider === "anthropic") return handleAnthropic({ req, res, llmKey, url, model, msgs, stream });
-
-  const headers = { "Content-Type": "application/json" };
-  if (llmKey) headers.Authorization = `Bearer ${llmKey}`;
-
-  const payload = { model, messages: msgs, temperature: 0.2, max_tokens: 600, response_format: { type: "json_object" } };
-  if (stream) payload.stream = true;
-  if (provider === "ollama") payload.keep_alive = "30m";
+  const msgs = messages || [{ role: "user", content: prompt }];
 
   const ctrl = new AbortController();
-  const timeout = provider === "ollama" ? 120000 : 30000;
-  const timer = setTimeout(() => ctrl.abort(), timeout);
   const onClientClose = () => ctrl.abort();
-  req.on("close", onClientClose);
+  res.on("close", onClientClose);
 
   try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
+    const result = await callLLM({
+      provider,
+      model: req.body.model,
+      messages: msgs,
+      apiKey: llmKey,
+      temperature: 0.2,
+      maxTokens: 600,
+      jsonMode: true,
+      stream,
       signal: ctrl.signal,
+      onStreamStart: () => {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+      },
+      onPartial: (chunk) => res.write(chunk),
     });
 
-    if (stream && r.ok && r.body) {
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      try {
-        for await (const chunk of r.body) res.write(chunk);
-      } catch (e) {
-        // upstream stream error — best-effort close
-      }
-      clearTimeout(timer);
-      req.off("close", onClientClose);
+    req.off("close", onClientClose);
+
+    if (result.streamed) {
       res.end();
       return;
     }
-
-    clearTimeout(timer);
-    req.off("close", onClientClose);
-    res.json(await r.json());
+    res.status(result.status).json(result.body);
   } catch (e) {
-    clearTimeout(timer);
     req.off("close", onClientClose);
     const msg = e.name === "AbortError" ? "LLM timed out — try again" : e.message;
     if (res.headersSent) res.end();
     else res.status(500).json({ error: msg });
   }
 });
-
-// ── Anthropic adapter (translates to/from OpenAI shape so the UI is unchanged)
-async function handleAnthropic({ req, res, llmKey, url, model, msgs, stream }) {
-  const sys = msgs
-    .filter(m => m.role === "system")
-    .map(m => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
-    .join("\n\n");
-  const conv = msgs.filter(m => m.role !== "system");
-  const convWithPrefill = [...conv, { role: "assistant", content: "{" }];
-
-  const payload = {
-    model,
-    messages: convWithPrefill,
-    temperature: 0.2,
-    max_tokens: 600,
-    stream: !!stream,
-  };
-  if (sys) payload.system = sys;
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
-  const onClientClose = () => ctrl.abort();
-  req.on("close", onClientClose);
-
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": llmKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal,
-    });
-
-    if (!r.ok) {
-      clearTimeout(timer);
-      req.off("close", onClientClose);
-      const err = await r.text();
-      return res.status(r.status).json({ error: `Anthropic: ${err}` });
-    }
-
-    if (stream && r.body) {
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "{" }, index: 0 }] })}\n\n`);
-      let buf = "";
-      try {
-        for await (const chunk of r.body) {
-          buf += chunk.toString();
-          let nl;
-          while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl).replace(/\r$/, "");
-            buf = buf.slice(nl + 1);
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const ev = JSON.parse(line.slice(6));
-              if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
-                res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ev.delta.text }, index: 0 }] })}\n\n`);
-              } else if (ev.type === "message_stop") {
-                res.write("data: [DONE]\n\n");
-              }
-            } catch {}
-          }
-        }
-      } catch {}
-      clearTimeout(timer);
-      req.off("close", onClientClose);
-      res.end();
-      return;
-    }
-
-    clearTimeout(timer);
-    req.off("close", onClientClose);
-    const data = await r.json();
-    const text = "{" + (data.content || []).map(b => b.text || "").join("");
-    res.json({ choices: [{ message: { role: "assistant", content: text } }] });
-  } catch (e) {
-    clearTimeout(timer);
-    req.off("close", onClientClose);
-    const msg = e.name === "AbortError" ? "LLM timed out — try again" : e.message;
-    if (res.headersSent) res.end();
-    else res.status(500).json({ error: msg });
-  }
-}
 
 // ── Upstash KV helpers ────────────────────────────────────────────────────────
 async function kvGet(key) {
@@ -323,6 +231,102 @@ async function kvSet(key, value) {
   await fetch(`${process.env.KV_REST_API_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, {
     headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` },
   });
+}
+
+// ── Web UI session persistence ───────────────────────────────────────────────
+// Lets the browser client (public/index.html) survive a page reload without
+// losing its in-flight chat history / last-viewed project. The client holds
+// no server-issued id until the first save: POST /session (optionally with a
+// previously issued id) stores an opaque JSON blob under web_session:<id> in
+// KV and returns { id }; GET /session/:id reads it back as { data }. This is
+// UI state only (chat history, last-viewed project) — never Asana tokens or
+// LLM API keys, which stay in localStorage on the client and never touch
+// this endpoint.
+//
+// Chat history is capped at the last 30 messages before saving, mirroring
+// the same cap the client already applies to its in-memory chatHistory
+// array (see the `chatHistory.length > 30` truncation in public/index.html).
+function capSessionChatHistory(data) {
+  if (data && Array.isArray(data.chatHistory) && data.chatHistory.length > 30) {
+    return { ...data, chatHistory: data.chatHistory.slice(-30) };
+  }
+  return data;
+}
+
+app.post("/session", async (req, res) => {
+  const { id, data } = req.body || {};
+  if (data === undefined) return res.status(400).json({ error: "Missing data" });
+  const sessionId = id || crypto.randomUUID();
+  try {
+    await kvSet(`web_session:${sessionId}`, JSON.stringify(capSessionChatHistory(data)));
+    res.json({ id: sessionId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/session/:id", async (req, res) => {
+  try {
+    const raw = await kvGet(`web_session:${req.params.id}`);
+    if (!raw) return res.status(404).json({ error: "Not found" });
+    let data;
+    try { data = JSON.parse(raw); } catch { return res.status(404).json({ error: "Not found" }); }
+    res.json({ data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Connected-users registry ─────────────────────────────────────────────────
+// KV (Upstash) only supports get/set by key — there's no native way to list
+// "all keys matching asana:*". To let the daily digest cron enumerate every
+// connected Slack user, we additionally maintain a small JSON array of
+// slackUserIds under this fixed key, updated whenever /auth/callback saves a
+// new token. This is a best-effort read-modify-write (not atomic) — if two
+// callbacks race, one update could clobber the other, but losing a rare
+// concurrent registry append is an acceptable tradeoff for how infrequently
+// users connect, and the user can just message the bot again to re-trigger it.
+const CONNECTED_USERS_KEY = "asana:connected_users";
+
+async function addConnectedUser(slackUserId) {
+  try {
+    const raw = await kvGet(CONNECTED_USERS_KEY);
+    let list = [];
+    if (raw) {
+      try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) list = parsed; } catch {}
+    }
+    if (!list.includes(slackUserId)) {
+      list.push(slackUserId);
+      await kvSet(CONNECTED_USERS_KEY, JSON.stringify(list));
+    }
+  } catch (e) {
+    console.error(`Failed to add ${slackUserId} to connected-users registry:`, e.message);
+  }
+}
+
+async function removeConnectedUser(slackUserId) {
+  try {
+    const raw = await kvGet(CONNECTED_USERS_KEY);
+    if (!raw) return;
+    let list = [];
+    try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) list = parsed; } catch { return; }
+    const next = list.filter(id => id !== slackUserId);
+    if (next.length !== list.length) await kvSet(CONNECTED_USERS_KEY, JSON.stringify(next));
+  } catch (e) {
+    console.error(`Failed to remove ${slackUserId} from connected-users registry:`, e.message);
+  }
+}
+
+async function getConnectedUsers() {
+  try {
+    const raw = await kvGet(CONNECTED_USERS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.error("Failed to read connected-users registry:", e.message);
+    return [];
+  }
 }
 
 // ── Asana OAuth token helpers ─────────────────────────────────────────────────
@@ -388,6 +392,7 @@ app.get("/auth/callback", async (req, res) => {
     const tokenData = await tokenRes.json();
     if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
     await kvSet(`asana:${slackUserId}`, JSON.stringify({ access_token: tokenData.access_token, refresh_token: tokenData.refresh_token, expires_at: Date.now() + tokenData.expires_in * 1000 }));
+    await addConnectedUser(slackUserId);
     res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#fafafa"><h2>✅ Connected!</h2><p>Your Asana account is now linked to Minisana in Slack.</p><p style="color:#888">You can close this tab and return to Slack.</p></body></html>`);
   } catch (e) {
     res.status(500).send(`Connection failed: ${e.message}`);
@@ -546,6 +551,40 @@ function escapeSlackText(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Builds Slack Block Kit blocks with "Complete" / "Assign to me" buttons for
+// a list of concrete Asana tasks (each needs a known `gid`). Each button's
+// `value` JSON-encodes enough info (action, taskGid) to act on it later from
+// /slack/interactions without needing any server-side session. The acting
+// identity is deliberately NOT embedded here — /slack/interactions uses
+// payload.user.id (whoever actually clicks the button) so that a shared
+// channel can't let one user's button trigger actions under another user's
+// Asana identity. Only ever called for replies that already list specific
+// tasks — never attached to every reply.
+function buildTaskActionBlocks(taskList) {
+  const blocks = [];
+  for (const t of (taskList || []).filter(t => t.gid).slice(0, 10)) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeSlackText(t.name)}*` } });
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "✅ Complete", emoji: true },
+          action_id: "task_action",
+          value: JSON.stringify({ action: "complete_task", taskGid: t.gid }),
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "🙋 Assign to me", emoji: true },
+          action_id: "task_action",
+          value: JSON.stringify({ action: "assign_to_me", taskGid: t.gid }),
+        },
+      ],
+    });
+  }
+  return blocks;
+}
+
 function htmlToSlack(html) {
   if (!html) return "";
   return html
@@ -578,11 +617,25 @@ async function asanaReq(method, endpoint, body, token) {
   return r.json();
 }
 
+// Like asanaReq, but also surfaces the HTTP status code — needed by the cron
+// digest below to distinguish "token is revoked/invalid" (401) from other
+// errors, since asanaReq alone only returns the parsed JSON body.
+async function asanaReqWithStatus(method, endpoint, token) {
+  const r = await fetch(ASANA_API + endpoint, { method, headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+  const body = r.status === 204 || r.headers.get("content-length") === "0" ? {} : await r.json();
+  return { status: r.status, body };
+}
+
 async function runSlackAgent(text, channelId, asanaToken, slackUserId) {
   const claudeKey = process.env.ANTHROPIC_API_KEY;
-  if (!asanaToken || !claudeKey) return "Missing Asana token or ANTHROPIC_API_KEY env var.";
-
+  // Per-request side channel: when this reply lists concrete tasks, the
+  // answer branch below populates state.lastBlocks with Slack Block Kit
+  // action buttons (Complete / Assign to me) for callers (e.g. /slack/events,
+  // /slack/commands) to attach to their outgoing message. Reset it up front
+  // so a stale value from a previous call never leaks onto an unrelated reply.
   const state = getSlackChannelState(channelId, slackUserId);
+  state.lastBlocks = null;
+  if (!asanaToken || !claudeKey) return "Missing Asana token or ANTHROPIC_API_KEY env var.";
 
   if (!state.workspaceGid) {
     try {
@@ -649,13 +702,19 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
 
   let raw;
   try {
-    const llmRes = await fetch(LLM_URLS.anthropic, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": claudeKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: LLM_MODELS.anthropic, system: SLACK_RULES_BLOCK, messages: [{ role: "user", content: stateMsg + "\n\nUser message: " + text }], temperature: 0.2, max_tokens: 800 }),
+    const result = await callLLM({
+      provider: "anthropic",
+      messages: [
+        { role: "system", content: SLACK_RULES_BLOCK },
+        { role: "user", content: stateMsg + "\n\nUser message: " + text },
+      ],
+      apiKey: claudeKey,
+      temperature: 0.2,
+      maxTokens: 800,
+      jsonMode: true,
+      stream: false,
     });
-    const data = await llmRes.json();
-    raw = data.content?.[0]?.text || "";
+    raw = result.body?.choices?.[0]?.message?.content || "";
   } catch (e) {
     return `LLM error: ${e.message}`;
   }
@@ -669,7 +728,10 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
     state.chatHistory.push({ role: "user", content: text }, { role: "agent", content: reply });
     if (state.chatHistory.length > 20) state.chatHistory.splice(0, state.chatHistory.length - 20);
     const mentioned = tasks.filter(t => t.name && reply.toLowerCase().includes(t.name.toLowerCase()));
-    if (mentioned.length) state.recentContext = mentioned.slice(0, 10).map(t => ({ type: "task", name: t.name, gid: t.gid }));
+    if (mentioned.length) {
+      state.recentContext = mentioned.slice(0, 10).map(t => ({ type: "task", name: t.name, gid: t.gid }));
+      state.lastBlocks = buildTaskActionBlocks(mentioned);
+    }
     return reply;
   }
 
@@ -859,13 +921,18 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
         if (tr.errors) throw new Error(tr.errors[0].message);
         const d = tr.data || {};
         const ctx = { name: d.name, description: d.notes || "", assignee: d.assignee?.name || null, due: d.due_on || null, subtasks: (sr.data || []).map(s => ({ name: s.name, done: !!s.completed })), comments: (cr.data || []).filter(s => s.resource_subtype === "comment").slice(-5).map(s => ({ author: s.created_by?.name, text: s.text })) };
-        const explainRes = await fetch(LLM_URLS.anthropic, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": claudeKey, "anthropic-version": "2023-06-01" },
-          body: JSON.stringify({ model: LLM_MODELS.anthropic, system: "Explain this Asana task in 3-5 plain sentences. Cover: what must be done, who is responsible, any deadline. If comments add context, include them. Return plain text only.", messages: [{ role: "user", content: `Task: ${JSON.stringify(ctx)}` }], max_tokens: 400 }),
+        const explainResult = await callLLM({
+          provider: "anthropic",
+          messages: [
+            { role: "system", content: "Explain this Asana task in 3-5 plain sentences. Cover: what must be done, who is responsible, any deadline. If comments add context, include them. Return plain text only." },
+            { role: "user", content: `Task: ${JSON.stringify(ctx)}` },
+          ],
+          apiKey: claudeKey,
+          maxTokens: 400,
+          jsonMode: false,
+          stream: false,
         });
-        const explainData = await explainRes.json();
-        results.push({ ok: true, readonly: true, msg: explainData.content?.[0]?.text || "(no explanation)" });
+        results.push({ ok: true, readonly: true, msg: explainResult.body?.choices?.[0]?.message?.content || "(no explanation)" });
         state.recentContext = [{ type: "task", name: task.name, gid: task.gid }];
       } else if (a.action === "add_follower" || a.action === "remove_follower") {
         const fid = resolveUser(a.follower || a.assignee);
@@ -951,10 +1018,10 @@ app.post("/slack/events", verifySlackSignature, async (req, res) => {
   const slackToken = process.env.SLACK_BOT_TOKEN;
   if (!slackToken) return;
 
-  const postMessage = (text) => fetch("https://slack.com/api/chat.postMessage", {
+  const postMessage = (text, blocks) => fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${slackToken}` },
-    body: JSON.stringify({ channel: event.channel, text }),
+    body: JSON.stringify({ channel: event.channel, text, ...(blocks && blocks.length ? { blocks } : {}) }),
   });
 
   waitUntil((async () => {
@@ -966,12 +1033,300 @@ app.post("/slack/events", verifySlackSignature, async (req, res) => {
         return;
       }
       const reply = await runSlackAgent(event.text, event.channel, asanaToken, event.user);
-      await postMessage(reply);
+      const state = getSlackChannelState(event.channel, event.user);
+      await postMessage(reply, state.lastBlocks);
     } catch (e) {
       console.error("Slack handler error:", e.message);
       await postMessage("Something went wrong. Please try again.").catch(() => {});
     }
   })());
+});
+
+// ── Slack slash command: /asana ──────────────────────────────────────────────
+// Manual Slack app setup required: create a Slash Command named "/asana"
+// with Request URL <deployed-base-url>/slack/commands (see comment block near
+// the top of this file for the full list of Slack request URLs to wire up).
+app.post("/slack/commands", verifySlackSignature, (req, res) => {
+  const { text, user_id: slackUserId, channel_id: channelId, response_url: responseUrl } = req.body;
+
+  // Slack requires an ack within 3 seconds — respond immediately, then keep
+  // working in the background and deliver the real answer via response_url.
+  res.status(200).json({ response_type: "ephemeral", text: "On it…" });
+  if (!slackUserId || !channelId || !responseUrl) return;
+
+  const postToResponseUrl = (body) => fetch(responseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  waitUntil((async () => {
+    try {
+      const asanaToken = await getAsanaTokenForUser(slackUserId);
+      if (!asanaToken) {
+        const connectUrl = `https://minisana.vercel.app/auth/asana?slack_user_id=${slackUserId}`;
+        await postToResponseUrl({
+          response_type: "ephemeral",
+          text: `Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`,
+        });
+        return;
+      }
+      const query = (text || "").trim() || "show me my tasks due today";
+      const reply = await runSlackAgent(query, channelId, asanaToken, slackUserId);
+      const state = getSlackChannelState(channelId, slackUserId);
+      const blocks = state.lastBlocks && state.lastBlocks.length
+        ? [{ type: "section", text: { type: "mrkdwn", text: reply } }, ...state.lastBlocks]
+        : undefined;
+      await postToResponseUrl({ response_type: "in_channel", text: reply, ...(blocks ? { blocks } : {}) });
+    } catch (e) {
+      console.error("Slack slash command error:", e.message);
+      await postToResponseUrl({ response_type: "ephemeral", text: "Something went wrong. Please try again." }).catch(() => {});
+    }
+  })());
+});
+
+// ── Slack interactive buttons: complete / assign-to-me ───────────────────────
+// Manual Slack app setup required: enable "Interactivity & Shortcuts" with
+// Request URL <deployed-base-url>/slack/interactions (see comment block near
+// the top of this file for the full list of Slack request URLs to wire up).
+app.post("/slack/interactions", verifySlackSignature, (req, res) => {
+  let payload;
+  try {
+    payload = JSON.parse(req.body.payload);
+  } catch {
+    return res.status(400).send();
+  }
+
+  // Ack within Slack's 3-second interaction window immediately.
+  res.status(200).send();
+
+  if (payload?.type !== "block_actions" || !Array.isArray(payload.actions)) return;
+  const responseUrl = payload.response_url;
+
+  const postToResponseUrl = (body) => fetch(responseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  waitUntil((async () => {
+    for (const buttonAction of payload.actions) {
+      let value;
+      try {
+        value = JSON.parse(buttonAction.value);
+      } catch {
+        continue;
+      }
+      const { action: actionType, taskGid } = value;
+      const slackUserId = payload.user?.id;
+      if (!taskGid || !slackUserId) continue;
+
+      try {
+        const asanaToken = await getAsanaTokenForUser(slackUserId);
+        if (!asanaToken) {
+          await postToResponseUrl({
+            replace_original: false,
+            response_type: "ephemeral",
+            text: "Your Asana connection has expired or isn't set up. Please reconnect and try again.",
+          });
+          continue;
+        }
+
+        if (actionType === "complete_task") {
+          const r = await asanaReq("PUT", `/tasks/${taskGid}?opt_fields=name`, { completed: true }, asanaToken);
+          if (r.errors) throw new Error(r.errors[0].message);
+          const name = escapeSlackText(r.data?.name || "task");
+          await postToResponseUrl({ replace_original: true, text: `✅ Marked *${name}* complete`, blocks: [] });
+        } else if (actionType === "assign_to_me") {
+          // Resolve the acting Slack user's Asana identity fresh via
+          // GET /users/me — rather than trusting any cached workspace state,
+          // since the interaction may arrive for a channel/session whose
+          // in-memory state (getSlackChannelState) has since been evicted
+          // (e.g. after a cold start on Vercel).
+          const meRes = await asanaReq("GET", "/users/me?opt_fields=gid,name", null, asanaToken);
+          if (meRes.errors) throw new Error(meRes.errors[0].message);
+          const r = await asanaReq("PUT", `/tasks/${taskGid}?opt_fields=name`, { assignee: meRes.data.gid }, asanaToken);
+          if (r.errors) throw new Error(r.errors[0].message);
+          const name = escapeSlackText(r.data?.name || "task");
+          const me = escapeSlackText(meRes.data?.name || "you");
+          await postToResponseUrl({ replace_original: true, text: `🙋 Assigned *${name}* to ${me}`, blocks: [] });
+        }
+      } catch (e) {
+        console.error("Slack interaction error:", e.message);
+        await postToResponseUrl({
+          replace_original: false,
+          response_type: "ephemeral",
+          text: `Something went wrong: ${escapeSlackText(e.message)}`,
+        }).catch(() => {});
+      }
+    }
+  })());
+});
+
+// ── Daily due-tasks cron ──────────────────────────────────────────────────────
+// Required env var: CRON_SECRET — a random secret string, set as an env var
+// on the Vercel project (alongside ASANA_CLIENT_ID/SECRET, SLACK_BOT_TOKEN,
+// SLACK_SIGNING_SECRET, ANTHROPIC_API_KEY, KV_REST_API_URL/TOKEN, etc). Vercel
+// automatically sends `Authorization: Bearer <CRON_SECRET>` on invocations it
+// triggers from vercel.json's `crons` entry, so verifyCronSecret below can
+// tell a real scheduled run apart from anyone else hitting this path.
+//
+// vercel.json schedules this route for "0 13 * * *" (13:00 UTC daily), chosen
+// as a rough approximation of 9am US Eastern — Vercel Cron schedules are
+// always in UTC (no per-project timezone setting), so adjust the hour in
+// vercel.json to whatever local morning time actually fits your users.
+function verifyCronSecret(req, res, next) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    console.error("CRON_SECRET is not set — rejecting cron request (fail closed)");
+    return res.sendStatus(500);
+  }
+  if (req.headers.authorization !== `Bearer ${secret}`) return res.sendStatus(401);
+  next();
+}
+
+// Runs `fn` over `items` with at most `limit` in flight at once — keeps the
+// daily digest from firing every connected user's Asana/Slack calls fully in
+// parallel if the connected-users registry grows large.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) || 0 }, worker));
+  return results;
+}
+
+// Fetches a user's incomplete tasks due today or earlier via Asana's search
+// API, which (unlike the plain /tasks endpoint) supports the assignee.any +
+// due_on.before filters needed here in a single call. Note: the
+// /workspaces/{gid}/tasks/search endpoint requires an Asana paid tier
+// ("Advanced Search") — on a free/Basic workspace this call itself will
+// error, which is caught like any other per-user failure below (logged,
+// counted as an error, run continues for other users).
+async function fetchDueOrOverdueTasks(token) {
+  const ws = await asanaReqWithStatus("GET", "/workspaces?opt_fields=gid&limit=1", token);
+  if (ws.status === 401) return { invalidToken: true };
+  if (ws.body.errors) throw new Error(ws.body.errors[0]?.message || `Failed to list workspaces (status ${ws.status})`);
+  const workspaceGid = ws.body.data?.[0]?.gid;
+  if (!workspaceGid) throw new Error("No Asana workspace found for user");
+
+  const me = await asanaReqWithStatus("GET", "/users/me?opt_fields=gid", token);
+  if (me.status === 401) return { invalidToken: true };
+  if (me.body.errors) throw new Error(me.body.errors[0]?.message || `Failed to fetch current user (status ${me.status})`);
+  const userGid = me.body.data?.gid;
+  if (!userGid) throw new Error("Could not resolve Asana user gid");
+
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  // due_on.before is a strict "<" filter, so due_on.before=tomorrow means
+  // "due on or before today" without needing to special-case today's own
+  // boundary (avoids ambiguity over whether due_on.before is inclusive).
+  const search = await asanaReqWithStatus(
+    "GET",
+    `/workspaces/${workspaceGid}/tasks/search?assignee.any=${userGid}&due_on.before=${tomorrow}&completed=false&opt_fields=name,gid,due_on&sort_by=due_date&limit=100`,
+    token
+  );
+  if (search.status === 401) return { invalidToken: true };
+  if (search.body.errors) throw new Error(search.body.errors[0]?.message || `Task search failed (status ${search.status})`);
+
+  const tasks = search.body.data || [];
+  return {
+    invalidToken: false,
+    overdue: tasks.filter(t => t.due_on && t.due_on < today),
+    dueToday: tasks.filter(t => t.due_on === today),
+  };
+}
+
+function buildDueTasksDigest(overdue, dueToday) {
+  const lines = [];
+  if (overdue.length) {
+    lines.push("*🔴 Overdue*");
+    for (const t of overdue) lines.push(`• ${escapeSlackText(t.name)} — was due ${t.due_on}`);
+  }
+  if (dueToday.length) {
+    if (lines.length) lines.push("");
+    lines.push("*🟡 Due today*");
+    for (const t of dueToday) lines.push(`• ${escapeSlackText(t.name)}`);
+  }
+  return `Good morning! Here's what needs your attention in Asana:\n${lines.join("\n")}`;
+}
+
+async function openSlackDm(slackToken, slackUserId) {
+  const r = await fetch("https://slack.com/api/conversations.open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${slackToken}` },
+    body: JSON.stringify({ users: slackUserId }),
+  });
+  const d = await r.json();
+  if (!d.ok) throw new Error(`conversations.open failed: ${d.error || "unknown error"}`);
+  return d.channel.id;
+}
+
+async function sendSlackMessage(slackToken, channelId, text, blocks) {
+  const r = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${slackToken}` },
+    body: JSON.stringify({ channel: channelId, text, ...(blocks && blocks.length ? { blocks } : {}) }),
+  });
+  const d = await r.json();
+  if (!d.ok) throw new Error(`chat.postMessage failed: ${d.error || "unknown error"}`);
+}
+
+// GET /cron/notify-due-tasks — invoked daily by the Vercel Cron entry in
+// vercel.json (see verifyCronSecret above for the auth model). For every
+// Slack user in the connected-users registry, DMs them a digest of Asana
+// tasks that are overdue or due today; users with nothing due get no message
+// at all (no empty-digest spam). Users are processed with modest concurrency
+// (not fully serial, not fully unbounded parallel) to be gentle on Asana/Slack
+// rate limits as the registry grows. Returns a JSON summary for observability
+// in Vercel's cron invocation logs.
+app.get("/cron/notify-due-tasks", verifyCronSecret, async (req, res) => {
+  const slackToken = process.env.SLACK_BOT_TOKEN;
+  if (!slackToken) return res.status(500).json({ error: "SLACK_BOT_TOKEN is not configured" });
+
+  const userIds = await getConnectedUsers();
+
+  let notified = 0, skipped = 0, errors = 0;
+
+  await mapWithConcurrency(userIds, 3, async (slackUserId) => {
+    try {
+      const token = await getAsanaTokenForUser(slackUserId);
+      if (!token) { skipped++; return; }
+
+      const result = await fetchDueOrOverdueTasks(token);
+      if (result.invalidToken) {
+        // Conservative on purpose: a 401 here could also reflect a transient
+        // refresh hiccup (getAsanaTokenForUser silently falls back to a stale
+        // access token if refreshAsanaToken's response has no access_token),
+        // not necessarily a permanently revoked connection — so this is
+        // logged and counted as an error rather than auto-removing the user
+        // from the registry (removeConnectedUser is available if that's ever
+        // wanted, but isn't called from here).
+        errors++;
+        console.error(`Asana auth failed for Slack user ${slackUserId} (due-tasks cron) — token may be revoked`);
+        return;
+      }
+
+      const { overdue, dueToday } = result;
+      if (!overdue.length && !dueToday.length) { skipped++; return; }
+
+      const text = buildDueTasksDigest(overdue, dueToday);
+      const blocks = buildTaskActionBlocks([...overdue, ...dueToday]);
+      const channelId = await openSlackDm(slackToken, slackUserId);
+      await sendSlackMessage(slackToken, channelId, text, blocks);
+      notified++;
+    } catch (e) {
+      errors++;
+      console.error(`Failed to send due-tasks digest to ${slackUserId}:`, e.message);
+    }
+  });
+
+  res.json({ notified, skipped, errors });
 });
 
 // ── Warm a specific Ollama model on demand ───────────────────────────────────
