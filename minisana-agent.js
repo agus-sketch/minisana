@@ -11,6 +11,7 @@ import { spawn } from "child_process";
 import crypto from "crypto";
 import { recommendModel } from "./recommend.js";
 import { callLLM } from "./lib/llmClients.js";
+import { fuzzyMatch, parseRelativeDate } from "./lib/agent-shared.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -77,11 +78,54 @@ function captureRawBody(req, res, buf) {
   req.rawBody = buf;
 }
 
+// The web UI is served same-origin by this same app (express.static below),
+// so it never needs cross-origin CORS at all — this only gates a DIFFERENT
+// site's browser JS calling these APIs (in particular POST /asana, which
+// forwards a caller-supplied bearer token to the real Asana API and would
+// otherwise be usable as an anonymous cross-site relay). Requests with no
+// Origin header (curl, server-to-server, Slack) are always allowed since
+// they aren't subject to the browser's CORS policy in the first place.
+const ALLOWED_ORIGINS = new Set([
+  "https://minisana.vercel.app",
+  `http://localhost:${process.env.PORT || 3000}`,
+]);
+
+// Needed so req.ip resolves the real client IP (via X-Forwarded-For) rather
+// than Vercel's proxy — used by the rate limiter below.
 const app = express();
-app.use(cors());
+app.set("trust proxy", true);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
+}));
 app.use(express.json({ verify: captureRawBody }));
 app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
 app.use(express.static(path.join(__dirname, "public")));
+
+// Lightweight in-memory rate limit for the open Asana proxy below. Resets
+// per server instance (a soft mitigation on serverless, where instances are
+// short-lived, but a real one for the local/self-hosted deployment mode) —
+// keyed by client IP, since the proxy takes its Asana bearer token from the
+// request body rather than requiring any auth of its own.
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 60;
+const rateLimitHits = new Map();
+function rateLimit(req, res, next) {
+  const key = req.ip || "unknown";
+  const now = Date.now();
+  const entry = rateLimitHits.get(key);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    rateLimitHits.set(key, { windowStart: now, count: 1 });
+    return next();
+  }
+  entry.count++;
+  if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
+    return res.status(429).json({ error: "Too many requests — please slow down." });
+  }
+  next();
+}
 
 // ── Slack request signature verification (HMAC, replay-protected) ───────────
 function verifySlackSignature(req, res, next) {
@@ -136,7 +180,7 @@ app.get("/ollama-models", async (req, res) => {
 });
 
 // ── Asana proxy ──────────────────────────────────────────────────────────────
-app.post("/asana", async (req, res) => {
+app.post("/asana", rateLimit, async (req, res) => {
   const { method, endpoint, body, token } = req.body;
   if (!token || !endpoint) return res.status(400).json({ error: "Missing token or endpoint" });
   try {
@@ -153,7 +197,7 @@ app.post("/asana", async (req, res) => {
 });
 
 // ── Asana attachment upload (multipart) ──────────────────────────────────────
-app.post("/asana-attach", upload.single("file"), async (req, res) => {
+app.post("/asana-attach", rateLimit, upload.single("file"), async (req, res) => {
   const { token, parent } = req.body;
   const file = req.file;
   if (!token || !parent || !file) return res.status(400).json({ error: "Missing token, parent, or file" });
@@ -227,10 +271,21 @@ async function kvGet(key) {
   return d.result ?? null;
 }
 
-async function kvSet(key, value) {
-  await fetch(`${process.env.KV_REST_API_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, {
+// ttlSeconds: optional expiry (Upstash REST maps path segments to Redis command args, so
+// `SET key value EX <ttl>` becomes `/set/<key>/<value>/EX/<ttl>`).
+async function kvSet(key, value, ttlSeconds) {
+  const segments = ["set", encodeURIComponent(key), encodeURIComponent(value)];
+  if (ttlSeconds) segments.push("EX", String(ttlSeconds));
+  await fetch(`${process.env.KV_REST_API_URL}/${segments.join("/")}`, {
     headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` },
   });
+}
+
+async function kvDel(key) {
+  const r = await fetch(`${process.env.KV_REST_API_URL}/del/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` },
+  });
+  return r.ok;
 }
 
 // ── Web UI session persistence ───────────────────────────────────────────────
@@ -362,22 +417,52 @@ async function getAsanaTokenForUser(slackUserId) {
 }
 
 // ── Asana OAuth routes ────────────────────────────────────────────────────────
-app.get("/auth/asana", (req, res) => {
-  const { slack_user_id } = req.query;
-  if (!slack_user_id) return res.status(400).send("Missing slack_user_id");
+// A raw ?slack_user_id= query param used to be trusted directly as the OAuth
+// `state` — anyone who saw or guessed a connect link (e.g. one bot-posted
+// into a shared channel) could bind THEIR OWN Asana account to a stranger's
+// Slack identity, or vice versa. Now the only value ever passed as `state`
+// is an opaque, single-use, short-lived token minted server-side — and the
+// only way to mint one for a given slackUserId is to already be inside a
+// handler that verified the request came from Slack (verifySlackSignature).
+const ASANA_CONNECT_TOKEN_TTL_SECONDS = 600; // 10 minutes
+
+async function mintAsanaConnectToken(slackUserId) {
+  const token = crypto.randomBytes(16).toString("hex");
+  await kvSet(`asana_connect:${token}`, slackUserId, ASANA_CONNECT_TOKEN_TTL_SECONDS);
+  return token;
+}
+
+app.get("/auth/asana", async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send("Missing or invalid connection link. Please restart from Slack.");
+  let slackUserId;
+  try {
+    slackUserId = await kvGet(`asana_connect:${token}`);
+  } catch (e) {
+    console.error("Failed to look up Asana connect token:", e.message);
+    return res.status(500).send("Failed to start the Asana connection flow. Please try again.");
+  }
+  if (!slackUserId) {
+    return res.status(400).send("This connection link has expired or was already used. Please restart from Slack.");
+  }
   const params = new URLSearchParams({
     client_id: process.env.ASANA_CLIENT_ID,
     redirect_uri: "https://minisana.vercel.app/auth/callback",
     response_type: "code",
-    state: slack_user_id,
+    state: token,
   });
   res.redirect(`https://app.asana.com/-/oauth_authorize?${params}`);
 });
 
 app.get("/auth/callback", async (req, res) => {
-  const { code, state: slackUserId } = req.query;
-  if (!code || !slackUserId) return res.status(400).send("Missing code or state");
+  const { code, state: token } = req.query;
+  if (!code || !token) return res.status(400).send("Missing code or state");
   try {
+    const slackUserId = await kvGet(`asana_connect:${token}`);
+    if (!slackUserId) {
+      return res.status(400).send("This connection link has expired or was already used. Please restart from Slack.");
+    }
+    await kvDel(`asana_connect:${token}`); // one-time use
     const tokenRes = await fetch("https://app.asana.com/-/oauth_token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -504,44 +589,12 @@ Each item: • Task name — Assignee — due DATE
 *📅 Up next* — due within 7 days
 Skip empty sections.`;
 
-function slackFuzzy(list, name) {
-  if (!name || !list) return null;
-  const n = name.toLowerCase().trim();
-  const safe = i => i.name ? i.name.toLowerCase() : "";
-  const direct = list.find(i => safe(i) === n)
-    || list.find(i => safe(i).startsWith(n))
-    || list.find(i => safe(i) && safe(i).includes(n))
-    || list.find(i => safe(i) && n.includes(safe(i)))
-    || list.find(i => { const w = n.split(/\s+/).filter(x => x.length > 2); return w.length && w.every(x => safe(i).includes(x)); })
-    || list.find(i => { const w = n.split(/\s+/).filter(x => x.length > 2); return w.length && w.some(x => safe(i).includes(x)); });
-  if (direct) return direct;
-  const toks = s => new Set((s || "").split(/[\s\-_/]+/).filter(w => w.length > 1));
-  const a = toks(n); if (!a.size) return null;
-  let best = null, bestScore = 0;
-  for (const i of list) { const b = toks(safe(i)); if (!b.size) continue; let inter = 0; for (const w of a) if (b.has(w)) inter++; const score = inter / Math.max(a.size, b.size); if (score > bestScore) { bestScore = score; best = i; } }
-  return bestScore >= 0.5 ? best : null;
-}
-
-function slackParseDate(s) {
-  if (!s || typeof s !== "string") return s;
-  const t = s.trim().toLowerCase(); if (!t) return s;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const iso = d => d.toISOString().slice(0, 10);
-  const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-  const DOW = { sunday: 0, sun: 0, monday: 1, mon: 1, tuesday: 2, tue: 2, tues: 2, wednesday: 3, wed: 3, thursday: 4, thu: 4, thurs: 4, friday: 5, fri: 5, saturday: 6, sat: 6 };
-  if (t === "today") return iso(today);
-  if (t === "tomorrow" || t === "tmrw" || t === "tmr") return iso(addDays(today, 1));
-  if (t === "yesterday") return iso(addDays(today, -1));
-  if (t === "end of week" || t === "eow") { const off = (5 - today.getDay() + 7) % 7 || 7; return iso(addDays(today, off)); }
-  if (t === "next week") return iso(addDays(today, 7));
-  if (t === "next month") { const x = new Date(today); x.setMonth(x.getMonth() + 1); return iso(x); }
-  const inDays = t.match(/^in\s+(\d+)\s+day(s)?$/); if (inDays) return iso(addDays(today, parseInt(inDays[1], 10)));
-  const inWeeks = t.match(/^in\s+(\d+)\s+week(s)?$/); if (inWeeks) return iso(addDays(today, parseInt(inWeeks[1], 10) * 7));
-  const nextDow = t.match(/^next\s+(\w+)$/); if (nextDow && DOW[nextDow[1]] != null) { const d = DOW[nextDow[1]]; const off = ((d - today.getDay() + 7) % 7) || 7; return iso(addDays(today, off)); }
-  if (DOW[t] != null) { const d = DOW[t]; const off = ((d - today.getDay() + 7) % 7) || 7; return iso(addDays(today, off)); }
-  return s;
-}
+// Canonical implementations live in lib/agent-shared.js (shared with nothing
+// else server-side yet, but kept there — not inline here — because
+// public/index.html's client copy is meant to mirror it; see that file's
+// header comment for why the browser can't just import this module).
+const slackFuzzy = fuzzyMatch;
+const slackParseDate = parseRelativeDate;
 
 // Escapes Slack mrkdwn control characters so Asana-derived text (task names,
 // notes, project/section/tag/user names, comments, etc.) can't be interpreted
@@ -578,6 +631,43 @@ function buildTaskActionBlocks(taskList) {
           text: { type: "plain_text", text: "🙋 Assign to me", emoji: true },
           action_id: "task_action",
           value: JSON.stringify({ action: "assign_to_me", taskGid: t.gid }),
+        },
+      ],
+    });
+  }
+  return blocks;
+}
+
+// Builds Slack Block Kit "Confirm delete" / "Cancel" buttons for one or more
+// pending deletions — used so an LLM-decided delete_task/delete_subtask
+// never executes straight away (matching the plain browser confirm() gate
+// already used for the equivalent bulk-delete button in public/index.html).
+// Like buildTaskActionBlocks above, everything needed to act on the click
+// (gid, and for a subtask its parent's gid so it can still be found via the
+// same GET /subtasks the rest of this file uses) is embedded directly in the
+// button's `value` — no server-side session/KV needed to resolve it.
+function buildDeleteConfirmBlocks(pendingDeletes) {
+  const blocks = [];
+  for (const d of pendingDeletes) {
+    const label = d.type === "subtask"
+      ? `sub-task *${escapeSlackText(d.name)}* (under *${escapeSlackText(d.parentName)}*)`
+      : `task *${escapeSlackText(d.name)}*`;
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `Delete ${label}? This cannot be undone.` } });
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          style: "danger",
+          text: { type: "plain_text", text: "🗑️ Confirm delete", emoji: true },
+          action_id: "delete_confirm_action",
+          value: JSON.stringify({ action: "confirm_delete", type: d.type, gid: d.gid, name: d.name }),
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Cancel", emoji: true },
+          action_id: "delete_confirm_action",
+          value: JSON.stringify({ action: "cancel_delete", name: d.name }),
         },
       ],
     });
@@ -743,11 +833,19 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
   const subFetch = new Map();
   const fetchSubs = async parentGid => { if (!subFetch.has(parentGid)) { const r = await asanaReq("GET", `/tasks/${parentGid}/subtasks?opt_fields=name,gid,completed&limit=100`, null, asanaToken); if (r.errors) throw new Error(r.errors[0].message); subFetch.set(parentGid, r.data || []); } return subFetch.get(parentGid); };
 
-  for (const a of actions) { if (a.due) a.due = slackParseDate(a.due); }
+  // delete_task/delete_subtask never execute directly from an LLM decision —
+  // they're resolved to a concrete gid below, then held for an explicit
+  // Slack button confirmation (see buildDeleteConfirmBlocks and the
+  // delete_confirm_action handler in /slack/interactions), matching the
+  // plain confirm() gate the web UI already uses for the same actions.
+  const deleteActions = actions.filter(a => a.action === "delete_task" || a.action === "delete_subtask");
+  const otherActions = actions.filter(a => a.action !== "delete_task" && a.action !== "delete_subtask");
+
+  for (const a of otherActions) { if (a.due) a.due = slackParseDate(a.due); }
 
   const results = [];
 
-  for (const a of actions) {
+  for (const a of otherActions) {
     if (a.action === "unknown") continue;
 
     if (a.action === "switch_project") {
@@ -856,10 +954,6 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
         const r = await asanaReq("PUT", `/tasks/${task.gid}`, { notes: a.notes || a.description || "" }, asanaToken);
         if (r.errors) throw new Error(r.errors[0].message);
         results.push({ ok: true, msg: `Updated description of *${task.name}*` });
-      } else if (a.action === "delete_task") {
-        await asanaReq("DELETE", `/tasks/${task.gid}`, null, asanaToken);
-        results.push({ ok: true, msg: `Deleted *${task.name}*` });
-        state.recentContext = [];
       } else if (a.action === "create_subtask") {
         const stData = { name: a.name };
         if (a.assignee) stData.assignee = resolveUser(a.assignee);
@@ -968,12 +1062,6 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
         const r = await asanaReq("PUT", `/tasks/${sub.gid}`, { name: a.name }, asanaToken);
         if (r.errors) throw new Error(r.errors[0].message);
         results.push({ ok: true, msg: `Renamed sub-task to *${a.name}*` });
-      } else if (a.action === "delete_subtask") {
-        const subs = await fetchSubs(task.gid);
-        const sub = slackFuzzy(subs, a.subtask);
-        if (!sub) { results.push({ ok: false, msg: `Sub-task "${a.subtask}" not found` }); continue; }
-        await asanaReq("DELETE", `/tasks/${sub.gid}`, null, asanaToken);
-        results.push({ ok: true, msg: `Deleted sub-task *${sub.name}*` });
       } else if (a.action === "unassign_subtask") {
         const subs = await fetchSubs(task.gid);
         const sub = slackFuzzy(subs, a.subtask);
@@ -994,16 +1082,51 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(state.workspaceTags.map(t => t
     }
   }
 
-  state.chatHistory.push({ role: "user", content: text }, { role: "agent", content: results.map(r => r.msg).join("; ") });
+  // Resolve each pending delete to a concrete gid now (fuzzy-matching only
+  // works against this request's already-fetched tasks/sections), but don't
+  // execute it — hand off to buildDeleteConfirmBlocks below and wait for an
+  // explicit button click (see delete_confirm_action in /slack/interactions).
+  const pendingDeletes = [];
+  for (const a of deleteActions) {
+    if (!a.task) { results.push({ ok: false, msg: "Could not identify which task to delete. Try being more specific." }); continue; }
+    const task = slackFuzzy(tasks, a.task);
+    if (!task) { results.push({ ok: false, msg: `Task "${a.task}" not found` }); continue; }
+    if (a.action === "delete_task") {
+      pendingDeletes.push({ type: "task", gid: task.gid, name: task.name });
+    } else {
+      try {
+        const subs = await fetchSubs(task.gid);
+        const sub = slackFuzzy(subs, a.subtask);
+        if (!sub) { results.push({ ok: false, msg: `Sub-task "${a.subtask}" not found` }); continue; }
+        pendingDeletes.push({ type: "subtask", gid: sub.gid, name: sub.name, parentName: task.name });
+      } catch (e) {
+        results.push({ ok: false, msg: `delete_subtask failed: ${e.message}` });
+      }
+    }
+  }
+  if (pendingDeletes.length) state.lastBlocks = buildDeleteConfirmBlocks(pendingDeletes);
+
+  const historyNote = pendingDeletes.length
+    ? [...results.map(r => r.msg), `Waiting on delete confirmation for ${pendingDeletes.map(d => d.name).join(", ")}`].join("; ")
+    : results.map(r => r.msg).join("; ");
+  state.chatHistory.push({ role: "user", content: text }, { role: "agent", content: historyNote });
   if (state.chatHistory.length > 20) state.chatHistory.splice(0, state.chatHistory.length - 20);
 
-  if (!results.length) return "Done.";
-  const allOk = results.every(r => r.ok);
-  const prefix = !allOk ? "Finished with issues:" : results.every(r => r.readonly) ? "Here's what I found:" : "Done!";
+  if (!results.length && !pendingDeletes.length) return "Done.";
   // results[].msg may embed Asana-derived data (task/section/tag/user names, notes,
   // comments) interpolated directly by the code above — escape the assembled text
   // as a whole so none of it can be read by Slack as link/mention mrkdwn syntax.
-  return escapeSlackText(prefix + "\n" + results.map(r => `${r.ok ? "✓" : "✗"} ${r.msg}`).join("\n"));
+  let reply = "";
+  if (results.length) {
+    const allOk = results.every(r => r.ok);
+    const prefix = !allOk ? "Finished with issues:" : results.every(r => r.readonly) ? "Here's what I found:" : "Done!";
+    reply = escapeSlackText(prefix + "\n" + results.map(r => `${r.ok ? "✓" : "✗"} ${r.msg}`).join("\n"));
+  }
+  if (pendingDeletes.length) {
+    const confirmNote = `Please confirm ${pendingDeletes.length > 1 ? "these deletions" : "this deletion"} below — this cannot be undone.`;
+    reply = reply ? reply + "\n\n" + confirmNote : confirmNote;
+  }
+  return reply;
 }
 
 // ── Slack Events API ─────────────────────────────────────────────────────────
@@ -1028,7 +1151,7 @@ app.post("/slack/events", verifySlackSignature, async (req, res) => {
     try {
       const asanaToken = await getAsanaTokenForUser(event.user);
       if (!asanaToken) {
-        const connectUrl = `https://minisana.vercel.app/auth/asana?slack_user_id=${event.user}`;
+        const connectUrl = `https://minisana.vercel.app/auth/asana?token=${await mintAsanaConnectToken(event.user)}`;
         await postMessage(`Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`);
         return;
       }
@@ -1064,7 +1187,7 @@ app.post("/slack/commands", verifySlackSignature, (req, res) => {
     try {
       const asanaToken = await getAsanaTokenForUser(slackUserId);
       if (!asanaToken) {
-        const connectUrl = `https://minisana.vercel.app/auth/asana?slack_user_id=${slackUserId}`;
+        const connectUrl = `https://minisana.vercel.app/auth/asana?token=${await mintAsanaConnectToken(slackUserId)}`;
         await postToResponseUrl({
           response_type: "ephemeral",
           text: `Hi! I need to connect to your Asana account before I can help.\n\n<${connectUrl}|Click here to connect Asana> — it takes about 10 seconds.`,
@@ -1119,7 +1242,40 @@ app.post("/slack/interactions", verifySlackSignature, (req, res) => {
       }
       const { action: actionType, taskGid } = value;
       const slackUserId = payload.user?.id;
-      if (!taskGid || !slackUserId) continue;
+      if (!slackUserId) continue;
+
+      if (actionType === "cancel_delete") {
+        await postToResponseUrl({ replace_original: true, text: `Cancelled — *${escapeSlackText(value.name || "that")}* was not deleted.`, blocks: [] }).catch(() => {});
+        continue;
+      }
+
+      if (actionType === "confirm_delete") {
+        try {
+          const asanaToken = await getAsanaTokenForUser(slackUserId);
+          if (!asanaToken) {
+            await postToResponseUrl({
+              replace_original: false,
+              response_type: "ephemeral",
+              text: "Your Asana connection has expired or isn't set up. Please reconnect and try again.",
+            });
+            continue;
+          }
+          if (!value.gid) throw new Error("Missing task id");
+          await asanaReq("DELETE", `/tasks/${value.gid}`, null, asanaToken);
+          const label = value.type === "subtask" ? "sub-task" : "task";
+          await postToResponseUrl({ replace_original: true, text: `🗑️ Deleted ${label} *${escapeSlackText(value.name || "")}*`, blocks: [] });
+        } catch (e) {
+          console.error("Slack delete-confirm interaction error:", e.message);
+          await postToResponseUrl({
+            replace_original: false,
+            response_type: "ephemeral",
+            text: `Something went wrong: ${escapeSlackText(e.message)}`,
+          }).catch(() => {});
+        }
+        continue;
+      }
+
+      if (!taskGid) continue;
 
       try {
         const asanaToken = await getAsanaTokenForUser(slackUserId);

@@ -653,6 +653,13 @@ function avatarColor(n) { const p=['#f06a6a','#6a9ef0','#6af09e','#f0c36a','#c36
 function initials(n) { if(!n)return'?'; const p=n.trim().split(/\s+/); return(p.length>=2?p[0][0]+p[1][0]:n.slice(0,2)).toUpperCase(); }
 function isOverdue(d) { return d&&new Date(d+'T00:00:00')<new Date(new Date().toDateString()); }
 function fmtDate(iso) { if(!iso)return''; const d=new Date(iso); return d.toLocaleDateString([],{month:'short',day:'numeric',year:d.getFullYear()!==new Date().getFullYear()?'numeric':undefined}); }
+// KEEP IN SYNC with parseRelativeDate in lib/agent-shared.js (the server's
+// canonical copy, used by the Slack agent) — this page can't just import
+// that module: it's one big classic (non-module) <script> with 50+ inline
+// onclick="..." handlers depending on global scope, and module scripts
+// always defer regardless of tag position, which risks load-order bugs on a
+// page like this. Not worth that risk to dedupe ~20 lines of pure logic, but
+// if you change the matching behavior, change both copies.
 function parseRelativeDate(s) {
   if(!s||typeof s!=='string') return s;
   const t=s.trim().toLowerCase(); if(!t) return s;
@@ -1302,6 +1309,9 @@ async function callLLM(messages, onPartial) {
   }
   return full;
 }
+// KEEP IN SYNC with fuzzyMatch in lib/agent-shared.js — see the
+// parseRelativeDate comment above for why this stays a copy instead of an
+// import.
 function fuzzy(list,name) {
   if(!name||!list) return null;
   const n=name.toLowerCase().trim();
@@ -1668,7 +1678,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
           }
           didMutate=true;
         }
-        else if(a.action==='delete_task'){const r=await asana('DELETE',`/tasks/${task.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted <strong>${task.name}</strong>`});didMutate=true;recentContext=[];}
+        else if(a.action==='delete_task'){if(!confirm(`Delete "${task.name}"? This cannot be undone.`)){results.push({ok:false,msg:`Deletion of <strong>${task.name}</strong> cancelled`});continue;}const r=await asana('DELETE',`/tasks/${task.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted <strong>${task.name}</strong>`});didMutate=true;recentContext=[];}
         else if(a.action==='comment'){const r=await asana('POST',`/tasks/${task.gid}/stories`,{data:{text:a.comment}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Commented on <strong>${task.name}</strong>: "${a.comment}"`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
         else if(a.action==='complete'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{completed:true}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Marked <strong>${task.name}</strong> complete`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{completed:false}}); return `reopened <strong>${task.name}</strong>`;});}
         else if(a.action==='uncomplete'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{completed:false}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Marked <strong>${task.name}</strong> incomplete`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];undoStack.push(async()=>{await asana('PUT',`/tasks/${task.gid}`,{data:{completed:true}}); return `marked <strong>${task.name}</strong> complete again`;});}
@@ -1696,7 +1706,7 @@ ${includeTags ? `\n=== TAGS ===\n${JSON.stringify(workspaceTags.map(t=>t.name))}
         else if(a.action==='rename_task'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{name:a.name}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Renamed to <strong>${a.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:a.name,gid:task.gid}];}
         else if(a.action==='rename_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{name:a.name}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Renamed sub-task to <strong>${a.name}</strong>`});didMutate=true;recentContext=[{type:'subtask',name:a.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
         else if(a.action==='set_description'){const notes=a.notes||a.description||'';const r=await asana('PUT',`/tasks/${task.gid}`,{data:{notes}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Updated description of <strong>${task.name}</strong>`});recentContext=[{type:'task',name:task.name,gid:task.gid}];}
-        else if(a.action==='delete_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('DELETE',`/tasks/${sub.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted sub-task <strong>${sub.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
+        else if(a.action==='delete_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;if(!confirm(`Delete sub-task "${sub.name}"? This cannot be undone.`)){results.push({ok:false,msg:`Deletion of sub-task <strong>${sub.name}</strong> cancelled`});continue;}const r=await asana('DELETE',`/tasks/${sub.gid}`);if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Deleted sub-task <strong>${sub.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
         else if(a.action==='unassign'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{assignee:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed assignee from <strong>${task.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
         else if(a.action==='unassign_subtask'){const sub=await mustResolveSubtask(task.gid,a.subtask);if(!sub)continue;const r=await asana('PUT',`/tasks/${sub.gid}`,{data:{assignee:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed assignee from sub-task <strong>${sub.name}</strong>`});didMutate=true;recentContext=[{type:'subtask',name:sub.name,gid:sub.gid,parent:task.name,parentGid:task.gid}];}
         else if(a.action==='remove_due_date'){const r=await asana('PUT',`/tasks/${task.gid}`,{data:{due_on:null}});if(r.errors)throw new Error(r.errors[0].message);results.push({ok:true,msg:`Removed due date from <strong>${task.name}</strong>`});didMutate=true;recentContext=[{type:'task',name:task.name,gid:task.gid}];}
